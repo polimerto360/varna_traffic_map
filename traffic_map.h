@@ -11,13 +11,15 @@
 #include <tuple>
 #include <algorithm>
 #include <cmath>
+#include <fstream>
+
 // TODO: Reference additional headers your program requires here.
 
 namespace config {
 	const double TIME_STEP = 1.0; // time step in seconds
 	const double DEFAULT_BUILDING_HEIGHT = 5.0; // default building height in meters
 	// target workplaces is 150000
-	const double EMPLOYEE_DENSITY = 0.024; // people per cubic meter (adding 0.01 increases result by 56309)
+	const double EMPLOYEE_DENSITY = 0.038; // people per cubic meter (adding 0.01 increases result by 56309)
 	const int MIN_EMPLOYEES = 5; // minimum people per workplace (adds or subtracts 2861)
 
 	// target residents is 350000
@@ -27,6 +29,7 @@ namespace config {
 	const double ENTERTAINMENT_DENSITY = 0.024; 
 	const int MIN_VISITORS = 5; 
 	
+	const double DEFAULT_ROAD_SPEED = 50.0; // default road speed in km/h
 
 	//const int NUM_CARS = 1000; // total number of cars in the simulation
 }
@@ -59,13 +62,19 @@ namespace traffic_sim
 		}
 	};
 	struct segment { // directed road segment
-		Node start;
-		Node end;
+		Node* start;
+		Node* end;
 		double length() {
-			return sqrt(pow(end.x() - start.x(), 2) + pow(end.y() - start.y(), 2));
+			return sqrt(pow(end->x() - start->x(), 2) + pow(end->y() - start->y(), 2));
 		}
 		vector<car*> cars;
 		double max_speed; // maximum speed allowed on the segment
+
+		segment(Node s, Node e, double ms) {
+			start = &s;
+			end = &e;
+			max_speed = ms;
+		}
 	};
 	struct car {
 		Coordinate position;
