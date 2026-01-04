@@ -17,20 +17,85 @@ static ostream& operator<<(ostream& out, const Coordinate& coord)
 	return out;
 }
 
-map<int64_t, vector<segment>> graph; // adjacency list representation of the road network graph
-map<int64_t, bool> visited; // for unlinked components
-vector<int64_t> all_nodes; // might contain duplicates
-
-int64_t node_hash(Node n) {
-	return (int64_t)n.xy();
+static ostream& operator<<(ostream& out, segment& seg)
+{
+	out << seg.start << " -> " << seg.end << "; len = " << seg.length();
+	return out;
 }
 
-Node *find(Features fs, int64_t id) {
+double coord_dist(Coordinate a, Coordinate b) {
+	return sqrt(pow(b.x - a.x, 2) + pow(b.y - a.y, 2));
+}
+
+map<point, vector<segment>> graph; // adjacency list representation of the road network graph
+map<point, bool> visited; // for unlinked components
+map<point, double> dist;
+vector<point> all_nodes; // might contain duplicates
+
+void find_path(point from, point to, vector<segment>& path) {
+	// dijkstra
+	visited.clear();
+	dist.clear();
+	for (point p : all_nodes) dist[p] = 1e20;
+	dist[from] = 0.0;
+	visited[from] = true;
+
+	typedef tuple<double, point, vector<segment>> pq_item;
+	auto cmp = [](pq_item a, pq_item b) {
+		return get<0>(a) > get<0>(b);
+		};
+	priority_queue < pq_item, vector<pq_item>, decltype(cmp)> pq(cmp);
+	pq.push({ 0.0, from, {} });
+	
+	while(!pq.empty()) {
+		auto [cur_dist, cur_point, cur_path] = pq.top();
+		//cout << "Current point: " << coord_from_point(cur_point) << " dist: " << cur_dist << endl;
+		pq.pop();
+		if (cur_point == to) {
+			path = cur_path;
+			return;
+		}
+		visited[cur_point] = true;
+
+		for (segment seg : graph[cur_point]) {
+			point next_point = (point)seg.end;
+			double seg_length = seg.length();
+			//cout << "    Segment: " << seg << endl;
+			double new_dist = cur_dist + seg_length;
+			if (!visited[next_point] && new_dist < dist[next_point]) {
+				dist[next_point] = new_dist;
+				vector<segment> new_path = cur_path;
+				new_path.push_back(seg);
+				pq.push({ new_dist, next_point, new_path });
+			}
+		}
+	}
+}
+
+
+point closest_node(Coordinate coord) {
+	point coord_hash = (point)coord;
+	point closest = -1;
+	double closest_dist = 1e20;
+	for (point n_hash : all_nodes) {
+		Coordinate n_coord = coord_from_point(n_hash);
+		double dist = coord_dist(coord, n_coord);
+		if (dist < closest_dist) {
+			closest_dist = dist;
+			closest = n_hash;
+		}
+	}
+	return closest;
+}
+
+/*
+Node* find(Features fs, int64_t id) {
 	for (Node f : fs.nodes()) {
 		if (f.id() == id) return &f;
 	}
 	return nullptr;
 }
+*/
 
 int main()
 {
@@ -81,12 +146,16 @@ int main()
 			Node from = node_list[i];
 			Node to = node_list[i + 1];
 
-			all_nodes.push_back(node_hash(from));
+			all_nodes.push_back(node_to_point(from));
+			all_nodes.push_back(node_to_point(to));
 
 			segment seg(from, to, speed);
 			
-			graph[node_hash(from)].push_back(seg);
-			out_file << seg.start->x() << " " << seg.start->y() << " " << seg.end->x() << " " << seg.end->y() << " f" << endl;
+			graph[node_to_point(from)].push_back(seg);
+			//auto tmp2 = from;
+			//auto tmp1 = *(graph[node_to_point(from)][0].start);
+			//assert(tmp1 == tmp2);
+			out_file << seg.start.x << " " << seg.start.y << " " << seg.end.x << " " << seg.end.y << " f" << endl;
 			count++;
 
 			if (r["oneway"] == "yes" || r["oneway"] == "true" || r["oneway"] == "1") {
@@ -94,14 +163,32 @@ int main()
 			}
 
 			segment newseg(to, from, speed);
-			graph[node_hash(to)].push_back(newseg);
-			out_file << newseg.start->x() << " " << newseg.start->y() << " " << newseg.end->x() << " " << newseg.end->y() << " r" << endl;
+			graph[node_to_point(to)].push_back(newseg);
+			out_file << newseg.start.x << " " << newseg.start.y << " " << newseg.end.x << " " << newseg.end.y << " r" << endl;
 			count++;
 		}
 		//cout << "Road: " << r["name"] << ", Type: " << r["highway"] << ", Length: " << r.length() << " meters" << endl;
 	}
 	cout << "Total segments: " << count << endl;
 
+	
+	sort(all_nodes.begin(), all_nodes.end());
+	all_nodes.erase(unique(all_nodes.begin(), all_nodes.end()), all_nodes.end()); // remove duplicates
+
+	point start = all_nodes[rng::random_int(0, all_nodes.size() - 1)];
+	cout << "Start node: " << coord_from_point(start) << endl;
+	//rng::mt_gen.discard(100); // advance the state to get a different random number
+	point end = all_nodes[rng::random_int(0, all_nodes.size() - 1)];
+	cout << "End node: " << coord_from_point(end) << endl;
+
+	vector<segment> path;
+	find_path(start, end, path);
+
+	cout << "Path segments: " << endl;
+	for (segment seg : path) {
+		cout << seg.start << " -> " << seg.end << " (length: " << seg.length() << " meters)" << endl;
+		out_file << seg.start.x << " " << seg.start.y << " " << seg.end.x << " " << seg.end.y << " c" << endl;
+	}
 	out_file.close();
 
 	// residential buildings

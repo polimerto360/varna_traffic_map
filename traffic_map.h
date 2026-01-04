@@ -12,6 +12,9 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <queue>
+#include <random>
+#include <functional>
 
 // TODO: Reference additional headers your program requires here.
 
@@ -40,10 +43,23 @@ namespace traffic_sim
 	using namespace geodesk;
 	using namespace config;
 
-	struct segment;
-	struct person; // forward declaration
-	struct workplace; // forward declaration
-	struct car; // forward declaration
+	typedef int64_t point; // hash for node coordinates
+
+
+	point node_to_point(Node n) {
+		return (point)n.xy();
+	}
+
+	Coordinate coord_from_point(point p) {
+		int32_t y = (int32_t)(p >> 32);
+		int32_t x = (int32_t)(p & 0xFFFFFFFF);
+		return Coordinate(x, y);
+	}
+
+	struct segment; // forward declarations
+	struct person; 
+	struct workplace;
+	struct car;
 
 	struct person {
 		string name;
@@ -62,19 +78,20 @@ namespace traffic_sim
 		}
 	};
 	struct segment { // directed road segment
-		Node* start;
-		Node* end;
+		Coordinate start;
+		Coordinate end;
 		double length() {
-			return sqrt(pow(end->x() - start->x(), 2) + pow(end->y() - start->y(), 2));
+			return sqrt(pow(end.x - start.x, 2) + pow(end.y - start.y, 2));
 		}
 		vector<car*> cars;
 		double max_speed; // maximum speed allowed on the segment
 
 		segment(Node s, Node e, double ms) {
-			start = &s;
-			end = &e;
+			start = s.xy();
+			end = e.xy();
 			max_speed = ms;
 		}
+
 	};
 	struct car {
 		Coordinate position;
@@ -151,5 +168,32 @@ namespace traffic_sim
 		int route_id;
 		vector<Coordinate> stops;
 		vector<person*> passengers;
+	};
+
+	namespace rng {
+		random_device rd;
+		static mt19937 mt_gen;
+
+		int random_int(int min_val, int max_val) {
+			uniform_int_distribution<int> dist(min_val, max_val);
+			return dist(mt_gen);
+		}
+		double random_double(double min_val, double max_val) {
+			uniform_real_distribution<double> dist(min_val, max_val);
+			return dist(mt_gen);
+		}
+		double normal_double(double mean, double stddev) {
+			normal_distribution<double> dist(mean, stddev);
+			return dist(mt_gen);
+		}
+		bool random_chance(double probability) {
+			uniform_real_distribution<double> dist(0.0, 1.0);
+			return dist(mt_gen) < probability;
+		}
+		double power_law_double(double min_val, double max_val, double exponent) {
+			double r = random_double(0.0, 1.0);
+			double scaled = pow(r, exponent);
+			return min_val + (max_val - min_val) * scaled;
+		}
 	};
 }
