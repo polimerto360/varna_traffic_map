@@ -104,11 +104,11 @@ int main()
 	ios_base::sync_with_stdio(false);
 	cin.tie(0);
 	cout.tie(0);
-	SetConsoleOutputCP(65001); // CP_UTF8
 	cout << setprecision(9);
 	cout << "Hello CMake." << endl;
 
-	Features features("D:\\storage\\traffic_map\\traffic_map\\bulgaria.gol");
+	string filepath = "/home/polimerto/Desktop/Coding/varna_traffic_map/bulgaria.gol";
+	Features features(filepath.c_str());
 	Feature varna = features("a[admin_level=5][name:en=Varna]").one(); // whole varna
 	Features features_in_varna = features.intersecting(varna);
 

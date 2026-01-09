@@ -5,7 +5,6 @@
 
 #include <iostream>
 #include <geodesk/geodesk.h>
-#include <windows.h>
 #include <vector>
 #include <map>
 #include <tuple>
@@ -86,7 +85,7 @@ namespace traffic_sim
 		vector<car*> cars;
 		double max_speed; // maximum speed allowed on the segment
 
-		segment(Node s, Node e, double ms) {
+		segment(const Node& s, const Node& e, const double ms) {
 			start = s.xy();
 			end = e.xy();
 			max_speed = ms;
@@ -101,7 +100,7 @@ namespace traffic_sim
 
 		person* driver;
 
-		car(Coordinate pos, double max_sp, segment seg, person dr) {
+		car(const Coordinate pos, const double max_sp, segment seg, person dr) {
 			position = pos;
 			cur_speed = 0.0;
 			max_speed = max_sp;
@@ -111,7 +110,7 @@ namespace traffic_sim
 	};
 
 	struct building {
-		static enum building_type {
+		enum building_type {
 			RESIDENTIAL,
 			WORKPLACE,
 			ENTERTAINMENT
@@ -123,7 +122,7 @@ namespace traffic_sim
 		int cur_employees = 0;
 
 		building(Feature loc, building_type t, double people_density = 0.0) {
-			name = loc["name"];
+			name = loc["name"].storedString();
 			type = t;
 			
 			if(name == "") {

@@ -18,3 +18,5 @@ FetchContent_Declare(geodesk GIT_REPOSITORY
 FetchContent_MakeAvailable(geodesk)
 
 target_link_libraries(traffic_map geodesk)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
