@@ -3,9 +3,6 @@
 
 #include "traffic_map.h"
 
-
-#pragma execution_character_set("utf-8")
-#pragma GCC optimize ("O3")
 using namespace std;
 using namespace geodesk;
 using namespace traffic_sim;
