@@ -76,6 +76,7 @@ namespace traffic_sim
 			work = w;
 		}
 	};
+
 	struct segment { // directed road segment
 		Coordinate start;
 		Coordinate end;
@@ -90,8 +91,35 @@ namespace traffic_sim
 			end = e.xy();
 			max_speed = ms;
 		}
+		segment(const segment &s)
+		{
+			start = s.start;
+			end = s.end;
+			max_speed = s.max_speed;
+		}
+		segment() = default;
 
 	};
+
+	struct seg_hash {
+		point p1;
+		point p2;
+		bool operator==(const seg_hash& s) const
+		{
+			return s.p1 == p1 && s.p2 == p2;
+		}
+		seg_hash(const segment &s)
+		{
+			p1 = (point)s.start;
+			p2 = (point)s.end;
+		}
+		seg_hash(const seg_hash &s)
+		{
+			p1 = s.p1;
+			p2 = s.p2;
+		}
+	};
+
 	struct car {
 		Coordinate position;
 		double cur_speed;

@@ -32,4 +32,7 @@
 *.app
 /.vs
 /out
+/build
 bulgaria-temp-map.html
+varna_traffic_map.kdev4
+/.kdev4

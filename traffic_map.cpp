@@ -5,7 +5,7 @@
 
 
 #pragma execution_character_set("utf-8")
-
+#pragma GCC optimize ("O3")
 using namespace std;
 using namespace geodesk;
 using namespace traffic_sim;
@@ -31,28 +31,39 @@ map<point, vector<segment>> graph; // adjacency list representation of the road 
 map<point, bool> visited; // for unlinked components
 map<point, double> dist;
 vector<point> all_nodes; // might contain duplicates
-
+map<seg_hash, vector<segment>> long_segments;
+map<seg_hash, segment> short_segments;
 void find_path(point from, point to, vector<segment>& path) {
-	// dijkstra
+	// A*
 	visited.clear();
 	dist.clear();
 	for (point p : all_nodes) dist[p] = 1e20;
 	dist[from] = 0.0;
 	visited[from] = true;
+	map<point, segment> came_from;
 
-	typedef tuple<double, point, vector<segment>> pq_item;
+	typedef tuple<double, point> pq_item;
 	auto cmp = [](pq_item a, pq_item b) {
 		return get<0>(a) > get<0>(b);
 		};
 	priority_queue < pq_item, vector<pq_item>, decltype(cmp)> pq(cmp);
-	pq.push({ 0.0, from, {} });
-	
+	pq.emplace( 0.0, from );
+
 	while(!pq.empty()) {
-		auto [cur_dist, cur_point, cur_path] = pq.top();
+		// TODO: check if node is a part of long segments and iterate over them instead
+		// TODO: if we have reached the long segment of the 'to' point, continue on the short segments to the end (graph)
+
+		auto [cur_dist, cur_point] = pq.top();
 		//cout << "Current point: " << coord_from_point(cur_point) << " dist: " << cur_dist << endl;
 		pq.pop();
 		if (cur_point == to) {
-			path = cur_path;
+			while(came_from.contains(cur_point)) {
+				path.push_back(came_from[cur_point]);
+				cur_point = (point)came_from[cur_point].start;
+			}
+
+			reverse(path.begin(), path.end());
+
 			return;
 		}
 		visited[cur_point] = true;
@@ -64,9 +75,8 @@ void find_path(point from, point to, vector<segment>& path) {
 			double new_dist = cur_dist + seg_length;
 			if (!visited[next_point] && new_dist < dist[next_point]) {
 				dist[next_point] = new_dist;
-				vector<segment> new_path = cur_path;
-				new_path.push_back(seg);
-				pq.push({ new_dist, next_point, new_path });
+				came_from[next_point] = seg;
+				pq.push({ new_dist + coord_dist(coord_from_point(next_point), coord_from_point(to)), next_point });
 			}
 		}
 	}
@@ -102,8 +112,8 @@ int main()
 
 
 	ios_base::sync_with_stdio(false);
-	cin.tie(0);
-	cout.tie(0);
+	cin.tie(nullptr);
+	cout.tie(nullptr);
 	cout << setprecision(9);
 	cout << "Hello CMake." << endl;
 
@@ -116,7 +126,7 @@ int main()
 	// temp for testing in vuzrazhdane
 	/*
 	const Feature* vuzrazhdane;
-	
+
 	for (const Feature& f : features_in_varna) {
 		if (f.id() == 44006186) { vuzrazhdane = &f; break; }
 	}
@@ -143,14 +153,14 @@ int main()
 		r.nodes().addTo(node_list);
 
 		for (int i = 0; i < node_list.size() - 1; i++) {
-			Node from = node_list[i];
-			Node to = node_list[i + 1];
+			const Node& from = node_list[i];
+			const Node& to = node_list[i + 1];
 
 			all_nodes.push_back(node_to_point(from));
 			all_nodes.push_back(node_to_point(to));
 
 			segment seg(from, to, speed);
-			
+
 			graph[node_to_point(from)].push_back(seg);
 			//auto tmp2 = from;
 			//auto tmp1 = *(graph[node_to_point(from)][0].start);
@@ -171,7 +181,7 @@ int main()
 	}
 	cout << "Total segments: " << count << endl;
 
-	
+
 	sort(all_nodes.begin(), all_nodes.end());
 	all_nodes.erase(unique(all_nodes.begin(), all_nodes.end()), all_nodes.end()); // remove duplicates
 
@@ -182,8 +192,10 @@ int main()
 	cout << "End node: " << coord_from_point(end) << endl;
 
 	vector<segment> path;
+	chrono::high_resolution_clock::time_point t1 = chrono::high_resolution_clock::now();
 	find_path(start, end, path);
-
+	chrono::high_resolution_clock::time_point t2 = chrono::high_resolution_clock::now();
+	cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl;
 	cout << "Path segments: " << endl;
 	for (segment seg : path) {
 		cout << seg.start << " -> " << seg.end << " (length: " << seg.length() << " meters)" << endl;
@@ -214,7 +226,7 @@ int main()
 	{
 		building b(f, building::WORKPLACE);
 		workplaces.push_back(b);
-		//cout << "Workplace: " << b.name << ", Capacity: " << b.capacity << ", Location: " << b.location->centroid() << endl;
+		cout << "Workplace: " << b.name << ", Capacity: " << b.capacity << ", Location: " << b.location->centroid() << endl;
 		count += b.capacity;
 	}
 	cout << "Total positions: " << count << endl;
