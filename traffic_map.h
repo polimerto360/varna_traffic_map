@@ -7,6 +7,7 @@
 #include <geodesk/geodesk.h>
 #include <vector>
 #include <map>
+#include <unordered_map>
 #include <tuple>
 #include <algorithm>
 #include <cmath>
@@ -55,6 +56,23 @@ namespace traffic_sim
 		return Coordinate(x, y);
 	}
 
+	double deg_to_rad(double deg) {
+		return deg / 180.0 * numbers::pi;
+	}
+
+	double coord_dist(Coordinate a, Coordinate b) {
+		constexpr double r = 6371.0;
+		double lon1 = deg_to_rad(a.lon());
+		double lat1 = deg_to_rad(a.lat());
+		double lon2 = deg_to_rad(b.lon());
+		double lat2 = deg_to_rad(b.lat());
+		double angle = acos(sin(lat1) * sin(lat2) + cos(lon1) * cos(lon2) * cos(lon1-lon2));
+		return r * angle;
+	}
+	double coord_dist(point a, point b) {
+		return coord_dist(coord_from_point(a), coord_from_point(b));
+	}
+
 	struct segment; // forward declarations
 	struct person; 
 	struct workplace;
@@ -80,45 +98,44 @@ namespace traffic_sim
 	struct segment { // directed road segment
 		Coordinate start;
 		Coordinate end;
-		double length() {
-			return sqrt(pow(end.x - start.x, 2) + pow(end.y - start.y, 2));
-		}
+		double length;
+
 		vector<car*> cars;
 		double max_speed; // maximum speed allowed on the segment
+		bool operator==(const segment& s) const
+		{
+			return s.start == start && s.end == end;
+		}
 
-		segment(const Node& s, const Node& e, const double ms) {
+		segment(const Node& s, const Node& e, const double ms, const double len = 0) {
 			start = s.xy();
 			end = e.xy();
 			max_speed = ms;
+			length = len;
+			if(len == 0) length = coord_dist(start, end);
+		}
+		segment(point _p1, point _p2, const double ms, const double len = 0) {
+			start = coord_from_point(_p1);
+			end = coord_from_point(_p2);
+			max_speed = ms;
+			length = len;
+			if(len == 0) length = coord_dist(start, end);
 		}
 		segment(const segment &s)
 		{
 			start = s.start;
 			end = s.end;
 			max_speed = s.max_speed;
+			length = s.length;
 		}
 		segment() = default;
 
+		size_t h() const {
+			return (point)start.x << 32 | (point)end.x;
+		}
+
 	};
 
-	struct seg_hash {
-		point p1;
-		point p2;
-		bool operator==(const seg_hash& s) const
-		{
-			return s.p1 == p1 && s.p2 == p2;
-		}
-		seg_hash(const segment &s)
-		{
-			p1 = (point)s.start;
-			p2 = (point)s.end;
-		}
-		seg_hash(const seg_hash &s)
-		{
-			p1 = s.p1;
-			p2 = s.p2;
-		}
-	};
 
 	struct car {
 		Coordinate position;
@@ -224,3 +241,9 @@ namespace traffic_sim
 		}
 	};
 }
+template<>
+struct std::hash<traffic_sim::segment> {
+	size_t operator()(const traffic_sim::segment& s) const {
+		return s.h();
+	}
+};

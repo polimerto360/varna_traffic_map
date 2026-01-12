@@ -16,20 +16,23 @@ static ostream& operator<<(ostream& out, const Coordinate& coord)
 
 static ostream& operator<<(ostream& out, segment& seg)
 {
-	out << seg.start << " -> " << seg.end << "; len = " << seg.length();
+	out << seg.start << " -> " << seg.end << "; len = " << seg.length;
 	return out;
 }
 
-double coord_dist(Coordinate a, Coordinate b) {
-	return sqrt(pow(b.x - a.x, 2) + pow(b.y - a.y, 2));
+void output_segment(ostream& out, const segment& seg, char type) {
+	out << seg.start.x << " " << seg.start.y << " " << seg.end.x << " " << seg.end.y << " " << type << endl;
+	return;
 }
+
+
 
 map<point, vector<segment>> graph; // adjacency list representation of the road network graph
 map<point, bool> visited; // for unlinked components
 map<point, double> dist;
 vector<point> all_nodes; // might contain duplicates
-map<seg_hash, vector<segment>> long_segments;
-map<seg_hash, segment> short_segments;
+unordered_map<segment, vector<segment>> long_segments;
+unordered_map<segment, segment> short_segments;
 void find_path(point from, point to, vector<segment>& path) {
 	// A*
 	visited.clear();
@@ -67,7 +70,7 @@ void find_path(point from, point to, vector<segment>& path) {
 
 		for (segment seg : graph[cur_point]) {
 			point next_point = (point)seg.end;
-			double seg_length = seg.length();
+			double seg_length = seg.length;
 			//cout << "    Segment: " << seg << endl;
 			double new_dist = cur_dist + seg_length;
 			if (!visited[next_point] && new_dist < dist[next_point]) {
@@ -79,6 +82,12 @@ void find_path(point from, point to, vector<segment>& path) {
 	}
 }
 
+bool has_connection_to(const vector<segment> &v, point p) {
+	for(const segment& s : v) {
+		if((point)s.end == p) return true;
+	}
+	return false;
+}
 
 point closest_node(Coordinate coord) {
 	point coord_hash = (point)coord;
@@ -146,10 +155,10 @@ int main()
 	for (const Way& r : roads) {
 		double speed = (r.hasTag("maxspeed") ? stod(r["maxspeed"]) : DEFAULT_ROAD_SPEED);
 
-		vector<Node> node_list;
-		r.nodes().addTo(node_list);
+		vector<Node> node_list; // nodes, composing the current Way
+		r.nodes().addTo(node_list); // converting from Nodes to a vector is neccessary for random access
 
-		for (int i = 0; i < node_list.size() - 1; i++) {
+		for (int i = 0; i < node_list.size() - 1; i++) { // iterate through them in pairs
 			const Node& from = node_list[i];
 			const Node& to = node_list[i + 1];
 
@@ -158,29 +167,85 @@ int main()
 
 			segment seg(from, to, speed);
 
-			graph[node_to_point(from)].push_back(seg);
+			graph[node_to_point(from)].push_back(seg); // add the segment to the adjacency list for the starting point
 			//auto tmp2 = from;
 			//auto tmp1 = *(graph[node_to_point(from)][0].start);
 			//assert(tmp1 == tmp2);
-			out_file << seg.start.x << " " << seg.start.y << " " << seg.end.x << " " << seg.end.y << " f" << endl;
+			// output_segment(out_file, seg, 'f');
 			count++;
 
 			if (r["oneway"] == "yes" || r["oneway"] == "true" || r["oneway"] == "1") {
-				continue;
+				continue; // for one way roads skip adding back edge
 			}
 
 			segment newseg(to, from, speed);
 			graph[node_to_point(to)].push_back(newseg);
-			out_file << newseg.start.x << " " << newseg.start.y << " " << newseg.end.x << " " << newseg.end.y << " r" << endl;
+			// output_segment(out_file, newseg, 'r');
 			count++;
 		}
 		//cout << "Road: " << r["name"] << ", Type: " << r["highway"] << ", Length: " << r.length() << " meters" << endl;
 	}
 	cout << "Total segments: " << count << endl;
 
-
 	sort(all_nodes.begin(), all_nodes.end());
 	all_nodes.erase(unique(all_nodes.begin(), all_nodes.end()), all_nodes.end()); // remove duplicates
+
+	chrono::high_resolution_clock::time_point t3 = chrono::high_resolution_clock::now();
+	for(point p : all_nodes) { // compressing graph - merging series of segments with only one edge (short_segment) into one (long_segment) (for faster pathfinding)
+		// RUNS FOR ABOUT 966ms
+		// we need to process only the points with more than 1 edge, so we skip those with 1 or those with two, where one of them leads back to our point
+		if(graph[p].size() <= 1 || (graph[p].size() == 2 && (has_connection_to(graph[(point)graph[p][0].end], p) || has_connection_to(graph[(point)graph[p][1].end], p)))) continue;
+		for(const segment& s : graph[p]) {
+			// if we have already processed the segment, there's no need to check it again'
+			if(short_segments.find(s) != short_segments.end()) continue;
+			point from = (point)s.start;
+			point to = (point)s.end;
+
+			vector<segment> long_segment;
+			long_segment.push_back(s);
+
+			// these two are for setting the long edge's length and max speed
+			double total_dist = s.length;
+			double total_time = s.length / s.max_speed;
+
+			Coordinate last = s.start;
+
+			// this loops through the edges until we find a crossing (point with at least 2 edges that are not our current point - to)
+			while((graph[to].size() == 1 && !has_connection_to(graph[to], (point)last)) || (graph[to].size() == 2 && has_connection_to(graph[to], (point)last))) {
+				int ind = 0; // ind is the index of the next edge on the adjacency list
+				if(graph[to].size() == 2) {
+					if(graph[to][0].end == last) ind = 1;
+					else ind = 0;
+				}
+
+				const segment &cur_seg = graph[to][ind];
+				// cycle detection (probably kinda slow)
+				if(find(long_segment.begin(), long_segment.end(), cur_seg) != long_segment.end()) break;
+				long_segment.push_back(cur_seg);
+				total_dist += cur_seg.length;
+				total_time += cur_seg.max_speed;
+				last = cur_seg.start;
+				to = (point)cur_seg.end;
+			}
+
+			// here our long segment is (from, to), and its composing short segments are stored in long_segment
+			double total_speed = total_dist / total_time;
+
+			segment l(from, to, total_speed, total_dist);
+			output_segment(out_file, l, 'l');
+			long_segments[l] = long_segment;
+			for(const segment &short_segment : long_segment) {
+				//if(short_segments.find(s) == short_segments.end()) {
+					short_segments[short_segment] = l;
+					//cout << "adding hash " << short_segment.h() << endl;
+					output_segment(out_file, short_segment, 's');
+				//}
+			}
+		}
+	}
+	chrono::high_resolution_clock::time_point t4 = chrono::high_resolution_clock::now();
+
+	cout << duration_cast<chrono::milliseconds>(t4 - t3) << " milliseconds" << endl;
 
 	point start = all_nodes[rng::random_int(0, all_nodes.size() - 1)];
 	cout << "Start node: " << coord_from_point(start) << endl;
@@ -195,8 +260,8 @@ int main()
 	cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl;
 	cout << "Path segments: " << endl;
 	for (segment seg : path) {
-		cout << seg.start << " -> " << seg.end << " (length: " << seg.length() << " meters)" << endl;
-		out_file << seg.start.x << " " << seg.start.y << " " << seg.end.x << " " << seg.end.y << " c" << endl;
+		cout << seg.start << " -> " << seg.end << " (length: " << seg.length << " meters)" << endl;
+		//output_segment(out_file, seg, 'c');
 	}
 	out_file.close();
 
