@@ -60,14 +60,40 @@ namespace traffic_sim
 		return deg / 180.0 * numbers::pi;
 	}
 
+	double hav(double x) {
+		return pow(sin(x/2), 2);
+	}
+	double ahav(double x) {
+		return 2 * asin(sqrt(x));
+	}
+
+	double imp_to_m(int imps) {
+		return (unsigned int)imps * 0.00825374 / 1.21558; // conversion factor centered at 27.8 degrees of latitude + accuracy fix
+	}
+
 	double coord_dist(Coordinate a, Coordinate b) {
-		constexpr double r = 6371.0;
+		// euclid distance - inaccurate
+		double par1 = (a.x-b.x);
+		double par2 = (a.y-b.y);
+		// assert(par1 * par1 + par2 * par2 >= 0);
+		return imp_to_m(sqrt(par1 * par1 + par2 * par2));
+
+
+	}
+	double coord_dist_accurate(Coordinate a, Coordinate b) {
+		// great circle distance - extremely slow
+		constexpr double r = 6371000.0;
 		double lon1 = deg_to_rad(a.lon());
 		double lat1 = deg_to_rad(a.lat());
 		double lon2 = deg_to_rad(b.lon());
 		double lat2 = deg_to_rad(b.lat());
-		double angle = acos(sin(lat1) * sin(lat2) + cos(lon1) * cos(lon2) * cos(lon1-lon2));
+
+		double angle = ahav(hav(abs(lat1-lat2)) + (1 - hav(abs(lat1-lat2)) - hav(lat1+lat2)) * hav(abs(lon1-lon2)));
 		return r * angle;
+
+	}
+	double coord_dist_accurate(point a, point b) {
+		return coord_dist_accurate(coord_from_point(a), coord_from_point(b));
 	}
 	double coord_dist(point a, point b) {
 		return coord_dist(coord_from_point(a), coord_from_point(b));
@@ -130,8 +156,10 @@ namespace traffic_sim
 		}
 		segment() = default;
 
-		size_t h() const {
-			return (point)start.x << 32 | (point)end.x;
+		string h() const { // hash function (segment direction matters)
+			stringstream ss;
+			ss << hex << (point)start.x << (point)end.x;
+			return ss.str();
 		}
 
 	};
@@ -244,6 +272,6 @@ namespace traffic_sim
 template<>
 struct std::hash<traffic_sim::segment> {
 	size_t operator()(const traffic_sim::segment& s) const {
-		return s.h();
+		return hash<string>{}(s.h());
 	}
 };

@@ -42,18 +42,20 @@ void find_path(point from, point to, vector<segment>& path) {
 	visited[from] = true;
 	map<point, segment> came_from;
 
-	typedef tuple<double, point> pq_item;
+	typedef tuple<double, double, point> pq_item;
 	auto cmp = [](pq_item a, pq_item b) {
-		return get<0>(a) > get<0>(b);
+		return get<0>(a) + get<1>(a) > get<0>(b) + get<1>(b);
 		};
 	priority_queue < pq_item, vector<pq_item>, decltype(cmp)> pq(cmp);
-	pq.emplace( 0.0, from );
+	pq.emplace( 0.0, coord_dist(from, to), from );
 
 	while(!pq.empty()) {
 		// TODO: check if node is a part of long segments and iterate over them instead
 		// TODO: if we have reached the long segment of the 'to' point, continue on the short segments to the end (graph)
 
-		auto [cur_dist, cur_point] = pq.top();
+
+		auto [cur_dist, _, cur_point] = pq.top();
+		//assert((double)_ != nan);
 		//cout << "Current point: " << coord_from_point(cur_point) << " dist: " << cur_dist << endl;
 		pq.pop();
 		if (cur_point == to) {
@@ -68,7 +70,7 @@ void find_path(point from, point to, vector<segment>& path) {
 		}
 		visited[cur_point] = true;
 
-		for (segment seg : graph[cur_point]) {
+		for (const segment& seg : graph[cur_point]) {
 			point next_point = (point)seg.end;
 			double seg_length = seg.length;
 			//cout << "    Segment: " << seg << endl;
@@ -76,7 +78,7 @@ void find_path(point from, point to, vector<segment>& path) {
 			if (!visited[next_point] && new_dist < dist[next_point]) {
 				dist[next_point] = new_dist;
 				came_from[next_point] = seg;
-				pq.push({ new_dist + coord_dist(coord_from_point(next_point), coord_from_point(to)), next_point });
+				pq.push({ new_dist, coord_dist(next_point, to), next_point });
 			}
 		}
 	}
