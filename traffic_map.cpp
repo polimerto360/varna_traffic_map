@@ -30,7 +30,7 @@ void output_segment(ostream& out, const segment& seg, char type) {
 map<point, vector<segment>> graph; // adjacency list representation of the road network graph
 map<point, bool> visited;
 map<point, double> dist;
-map<point, int> connected_to;
+map<point, int> connected_to; // how many points are connected with one way inward connection to each point
 vector<point> all_nodes;
 unordered_map<segment, vector<segment>> long_segments; // key - long segment; value - short segments that compose it
 unordered_map<segment, segment> short_segments; // key - short segment; value - long segment it is a part of
@@ -47,8 +47,14 @@ bool is_dead_end(point p) {
 	return graph[p].size() == 0;
 }
 
-bool is_source(point p) {
-	return connected_to[p] > 0;
+bool is_source(point p) { // called only once, so no need to be very fast
+	if(connected_to[p] > 0) return false;
+	for(const segment& s : graph[p]) {
+		for(const segment& s1 : graph[(point)s.end]) {
+			if(s1.end == s.start) return false;
+		}
+	}
+	return true;
 }
 
 point closest_node(Coordinate coord) {
