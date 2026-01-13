@@ -125,6 +125,7 @@ namespace traffic_sim
 		Coordinate start;
 		Coordinate end;
 		double length;
+		bool real = true;
 
 		vector<car*> cars;
 		double max_speed; // maximum speed allowed on the segment
@@ -133,19 +134,21 @@ namespace traffic_sim
 			return s.start == start && s.end == end;
 		}
 
-		segment(const Node& s, const Node& e, const double ms, const double len = 0) {
+		segment(const Node& s, const Node& e, const double ms, const double len = 0, bool r = true) {
 			start = s.xy();
 			end = e.xy();
 			max_speed = ms;
 			length = len;
 			if(len == 0) length = coord_dist(start, end);
+			real = r;
 		}
-		segment(point _p1, point _p2, const double ms, const double len = 0) {
+		segment(point _p1, point _p2, const double ms, const double len = 0, bool r = true) {
 			start = coord_from_point(_p1);
 			end = coord_from_point(_p2);
 			max_speed = ms;
 			length = len;
 			if(len == 0) length = coord_dist(start, end);
+			real = r;
 		}
 		segment(const segment &s)
 		{
@@ -153,6 +156,7 @@ namespace traffic_sim
 			end = s.end;
 			max_speed = s.max_speed;
 			length = s.length;
+			real = s.real;
 		}
 		segment() = default;
 
