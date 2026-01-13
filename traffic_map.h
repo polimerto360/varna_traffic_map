@@ -67,8 +67,8 @@ namespace traffic_sim
 		return 2 * asin(sqrt(x));
 	}
 
-	double imp_to_m(int imps) {
-		return (unsigned int)imps * 0.00825374 / 1.21558; // conversion factor centered at 27.8 degrees of latitude + accuracy fix
+	constexpr double imp_to_m(int imps) {
+		return (unsigned int)imps * 0.006801778856644; // conversion factor centered at 43.2 degrees of latitude
 	}
 
 	double coord_dist(Coordinate a, Coordinate b) {
