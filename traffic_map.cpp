@@ -30,6 +30,7 @@ void output_segment(ostream& out, const segment& seg, char type) {
 map<point, vector<segment>> graph; // adjacency list representation of the road network graph
 map<point, bool> visited;
 map<point, double> dist;
+map<point, int> connected_to;
 vector<point> all_nodes;
 unordered_map<segment, vector<segment>> long_segments; // key - long segment; value - short segments that compose it
 unordered_map<segment, segment> short_segments; // key - short segment; value - long segment it is a part of
@@ -38,16 +39,16 @@ ofstream out_file("out.txt", ofstream::trunc | ofstream::out);
 
 
 int unique_neighbors(point p) {
-	// with fake back edges, all segments represent a unique neighbor
-	// this number is also equal to the number of total connections (including fake) from / to this node
-	return graph[p].size();
+	// all segments represent a unique neighbor
+	return graph[p].size() + connected_to[p];
 }
 
-bool is_dead_end(point p) { // aka does it have real edges
-	for(const segment& s : graph[p]) {
-		if(s.real) return false;
-	}
-	return true;
+bool is_dead_end(point p) {
+	return graph[p].size() == 0;
+}
+
+bool is_source(point p) {
+	return connected_to[p] > 0;
 }
 
 point closest_node(Coordinate coord) {
@@ -77,7 +78,7 @@ void walk_forward(const segment& s, vector<segment>& out) {
 		// if it has one or two neighbours we can be sure that there can't be a split path ahead - there is either 1 or 0 possible nodes to continue to
 		int ind = -1; // ind is the index of the next edge on the adjacency list
 		for(int i = 0; i < graph[curr].size(); i++) {
-			if(!graph[curr][i].real || visited.contains((point)graph[curr][i].end)) continue;
+			if(visited.contains((point)graph[curr][i].end)) continue;
 			ind = i;
 			break;
 		}
@@ -90,7 +91,7 @@ void walk_forward(const segment& s, vector<segment>& out) {
 
 bool find_path(point from, point to, vector<segment>& path) {
 	// A* with compressed graph; 86 ms for vladislavovo - zelenika
-	if(unique_neighbors(from) == 0 || unique_neighbors(to) == 0 || is_dead_end(from)) return from == to;
+	if(unique_neighbors(from) == 0 || unique_neighbors(to) == 0 || is_dead_end(from) || is_source(to)) return from == to;
 	visited.clear();
 	for (point p : all_nodes) dist[p] = 1e20;
 	dist[from] = 0.0;
@@ -100,9 +101,8 @@ bool find_path(point from, point to, vector<segment>& path) {
 	point long_target = to;
 	segment* target_segment = nullptr;
 	if(unique_neighbors(to) <= 2 && !is_dead_end(to)) {
-		// not a dead end, so we know one of the max 2 edges is real
+		// not a dead end and not a source, so there is exactly one outward edge
 		int ind = 0;
-		if(!graph[to][ind].real) ind = 1;
 
 		assert(short_segments.contains(graph[to][ind]));
 		long_target = (point)short_segments[graph[to][ind]].start;
@@ -119,19 +119,17 @@ bool find_path(point from, point to, vector<segment>& path) {
 
 	if(unique_neighbors(from) == 2) { // we know there is at least one real connection - if it's the only one, the point is a start of a long segment
 		for(const segment& s : graph[from]) {
-			if(s.real){
-				vector<segment> p;
-				walk_forward(s, p);
-				double total_dist = 0;
-				for(const segment& seg : p) {
-					came_from[(point)seg.end] = seg;
-					total_dist += seg.length;
-				}
-				point end_point = (point)p[p.size()-1].end;
-				assert(long_graph.contains(end_point));
-				visited[(point)end_point] = true;
-				pq.emplace( total_dist, coord_dist(end_point, to), end_point );
+			vector<segment> p;
+			walk_forward(s, p);
+			double total_dist = 0;
+			for(const segment& seg : p) {
+				came_from[(point)seg.end] = seg;
+				total_dist += seg.length;
 			}
+			point end_point = (point)p[p.size()-1].end;
+			assert(long_graph.contains(end_point));
+			visited[(point)end_point] = true;
+			pq.emplace( total_dist, coord_dist(end_point, to), end_point );
 		}
 	} else {
 		assert(long_graph.contains(from));
@@ -177,7 +175,6 @@ bool find_path(point from, point to, vector<segment>& path) {
 		visited[cur_point] = true;
 
 		for (const segment& seg : long_graph[cur_point]) {
-			if(!seg.real) continue;
 			point next_point = (point)seg.end;
 			double seg_length = seg.length;
 			//cout << "    Segment: " << seg << endl;
@@ -253,24 +250,24 @@ int main()
 			all_nodes.push_back(node_to_point(from));
 			all_nodes.push_back(node_to_point(to));
 
-			segment seg(from, to, speed);
 
+			segment seg(from, to, speed);
 			graph[node_to_point(from)].push_back(seg); // add the segment to the adjacency list for the starting point
-			//auto tmp2 = from;
-			//auto tmp1 = *(graph[node_to_point(from)][0].start);
-			//assert(tmp1 == tmp2);
+			connected_to[node_to_point(to)]++;
 			output_segment(out_file, seg, 'f');
 			count++;
-			bool real_backedge = true;
 
 			if (r["oneway"] == "yes" || r["oneway"] == "true" || r["oneway"] == "1") {
-				real_backedge = false; // for one way roads set back edge to be fake
+				continue; // for one way roads skip
 			}
 
-			segment newseg(to, from, speed, real_backedge);
+
+			segment newseg(to, from, speed);
 			graph[node_to_point(to)].push_back(newseg);
-			output_segment(out_file, newseg, real_backedge ? 'r' : 'k');
+			connected_to[node_to_point(to)]--;
+			output_segment(out_file, newseg, 'r');
 			count++;
+
 		}
 		//cout << "Road: " << r["name"] << ", Type: " << r["highway"] << ", Length: " << r.length() << " meters" << endl;
 	}
@@ -283,7 +280,7 @@ int main()
 	for(point p : all_nodes) { // compressing graph - merging series of segments with only one edge (short_segment) into one (long_segment) (for faster pathfinding)
 		// RUNS FOR ABOUT 1200ms with O(N) time complexity
 		// we need to process only the points with more than 2 neighbors, and the ones with 1 neighbor, as they would be skipped completely otherwise
-		if( (graph[p].size() == 0) || (graph[p].size() == 2) ) continue;
+		if( (unique_neighbors(p) == 0) || (unique_neighbors(p) == 2) ) continue;
 		for(const segment& s : graph[p]) {
 			// if we have already processed the segment, there's no need to check it again
 			if(short_segments.find(s) != short_segments.end()) continue;
@@ -314,7 +311,7 @@ int main()
 			long_segments[l] = long_segment;
 			long_graph[(point)l.start].push_back(l);
 			for(const segment &short_segment : long_segment) {
-				assert(short_segment.real);
+				//assert(short_segment.real);
 				//if(short_segments.find(s) == short_segments.end()) {
 				short_segments[short_segment] = l;
 				//cout << "adding hash " << short_segment.h() << endl;
