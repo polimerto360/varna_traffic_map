@@ -1,7 +1,7 @@
 extends Node2D
 
 var EXE_PATH = "../build/traffic_map"
-var OUT_PATH = "/home/polimerto/Desktop/Coding/varna_traffic_map/build/out.txt"
+var OUT_PATH = "../build/out.txt"
 var ITERATIONS = 3;
 
 var f_gr = preload("res://f.tres")
