@@ -30,18 +30,20 @@ void output_segment(ostream& out, const segment& seg, char type) {
 map<point, vector<segment>> graph; // adjacency list representation of the road network graph
 map<point, bool> visited;
 map<point, double> dist;
-map<point, int> connected_to; // how many points are connected with one way inward connection to each point
+//map<point, int> connected_to; // how many points are connected with one way inward connection to each point
+map<point, int> component;
+map<point, vector<point>> weak_connections; // connections from another point to the key point
 vector<point> all_nodes;
 unordered_map<segment, vector<segment>> long_segments; // key - long segment; value - short segments that compose it
 unordered_map<segment, segment> short_segments; // key - short segment; value - long segment it is a part of
 map<point, vector<segment>> long_graph; // adjacency list for the long segments
-ofstream out_file("/home/polimerto/Desktop/Coding/varna_traffic_map/build/out.txt", ofstream::trunc | ofstream::out);
+ofstream out_file("out.txt", ofstream::trunc | ofstream::out);
 //ifstream in_file("in.txt");
 
 
 int unique_neighbors(point p) {
 	// all segments represent a unique neighbor
-	return graph[p].size() + connected_to[p];
+	return graph[p].size() + weak_connections[p].size();
 }
 
 bool is_dead_end(point p) {
@@ -49,12 +51,26 @@ bool is_dead_end(point p) {
 }
 
 bool is_source(point p) { // called only once, so no need to be very fast
-	if(connected_to[p] > 0) return false;
+	if(weak_connections[p].size() > 0) return false;
 	for(const segment& s : graph[p]) {
 		for(const segment& s1 : graph[(point)s.end]) {
 			if(s1.end == s.start) return false;
 		}
 	}
+	return true;
+}
+
+bool dfs(point p, int comp) {
+	if(visited[p]) return false;
+	visited[p] = true;
+	component[p] = comp;
+
+	for(const segment& s : graph[p]) {
+		//output_segment(out_file, s, '0' + comp);
+		dfs((point)s.end, comp);
+	}
+	for(point p2 : weak_connections[p])
+		dfs(p2, comp);
 	return true;
 }
 
@@ -77,27 +93,28 @@ point closest_node(Coordinate coord) {
 void walk_forward(const segment& s, vector<segment>& out) {
 	out.push_back(s);
 	point curr = (point)s.end;
-	unordered_set<point> visited; // for O(1)
-	visited.insert((point)s.start); // this sets the direction to explore - depends on the direction of s
-	visited.insert(curr);
+	unordered_set<point> cur_visited; // for O(1)
+	cur_visited.insert((point)s.start); // this sets the direction to explore - depends on the direction of s
+	cur_visited.insert(curr);
 	//assert(graph[curr].size() > 0);
 	while(graph.contains(curr) && (unique_neighbors(curr) == 2 || unique_neighbors(curr) == 1) ) {
 		// if it has one or two neighbours we can be sure that there can't be a split path ahead - there is either 1 or 0 possible nodes to continue to
 		int ind = -1; // ind is the index of the next edge on the adjacency list
 		for(int i = 0; i < graph[curr].size(); i++) {
-			if(visited.contains((point)graph[curr][i].end)) continue;
+			if(cur_visited.contains((point)graph[curr][i].end)) continue;
 			ind = i;
 			break;
 		}
 		if(ind == -1) return;
 		out.push_back(graph[curr][ind]);
-		visited.insert((point)graph[curr][ind].end);
+		cur_visited.insert((point)graph[curr][ind].end);
 		curr = (point)graph[curr][ind].end;
 	}
 }
 
 bool find_path(point from, point to, vector<segment>& path) {
 	// A* with compressed graph; 86 ms for vladislavovo - zelenika
+	if(component[from] != component[to]) return false;
 	if(unique_neighbors(from) == 0 || unique_neighbors(to) == 0 || is_dead_end(from) || is_source(to)) return from == to;
 	visited.clear();
 	for (point p : all_nodes) dist[p] = 1e20;
@@ -208,12 +225,16 @@ Node* find(Features fs, int64_t id) {
 int main(int argc, char *argv[])
 {
 
+	cout << "Hello CMake." << endl;
+
+	cout << "Running in ";
+	system("pwd");
+	cout << endl;
 
 	ios_base::sync_with_stdio(false);
 	cin.tie(nullptr);
 	cout.tie(nullptr);
 	cout << setprecision(9);
-	cout << "Hello CMake." << endl;
 
 	string filepath = "/home/polimerto/Desktop/Coding/varna_traffic_map/bulgaria.gol";
 	Features features(filepath.c_str());
@@ -252,27 +273,26 @@ int main(int argc, char *argv[])
 		r.nodes().addTo(node_list); // converting from Nodes to a vector is neccessary for random access
 
 		for (int i = 0; i < node_list.size() - 1; i++) { // iterate through them in pairs
-			const Node& from = node_list[i];
-			const Node& to = node_list[i + 1];
+			point from = node_to_point(node_list[i]);
+			point to = node_to_point(node_list[i + 1]);
 
-			all_nodes.push_back(node_to_point(from));
-			all_nodes.push_back(node_to_point(to));
+			all_nodes.push_back(from);
+			all_nodes.push_back(to);
 
 
 			segment seg(from, to, speed);
-			graph[node_to_point(from)].push_back(seg); // add the segment to the adjacency list for the starting point
-			connected_to[node_to_point(to)]++;
+			graph[from].push_back(seg); // add the segment to the adjacency list for the starting point
 			output_segment(out_file, seg, 'f');
 			count++;
 
 			if (r["oneway"] == "yes" || r["oneway"] == "true" || r["oneway"] == "1") {
+				weak_connections[to].push_back(from);
 				continue; // for one way roads skip
 			}
 
 
 			segment newseg(to, from, speed);
-			graph[node_to_point(to)].push_back(newseg);
-			connected_to[node_to_point(to)]--;
+			graph[to].push_back(newseg);
 			output_segment(out_file, newseg, 'r');
 			count++;
 
@@ -286,7 +306,7 @@ int main(int argc, char *argv[])
 	sort(all_nodes.begin(), all_nodes.end());
 	all_nodes.erase(unique(all_nodes.begin(), all_nodes.end()), all_nodes.end()); // remove duplicates
 
-	chrono::high_resolution_clock::time_point t3 = chrono::high_resolution_clock::now();
+	chrono::high_resolution_clock::time_point t1 = chrono::high_resolution_clock::now();
 	for(point p : all_nodes) { // compressing graph - merging series of segments with only one edge (short_segment) into one (long_segment) (for faster pathfinding)
 		// RUNS FOR ABOUT 1200ms with O(N) time complexity
 		// we need to process only the points with more than 2 neighbors, and the ones with 1 neighbor, as they would be skipped completely otherwise
@@ -325,32 +345,48 @@ int main(int argc, char *argv[])
 				//if(short_segments.find(s) == short_segments.end()) {
 				short_segments[short_segment] = l;
 				//cout << "adding hash " << short_segment.h() << endl;
-				output_segment(out_file, short_segment, 's');
+				//output_segment(out_file, short_segment, 's');
 				//}
 			}
 		}
 	}
-	chrono::high_resolution_clock::time_point t4 = chrono::high_resolution_clock::now();
+	chrono::high_resolution_clock::time_point t2 = chrono::high_resolution_clock::now();
 
 	cout << "DONE\n";
-	cout << duration_cast<chrono::milliseconds>(t4 - t3) << " milliseconds" << endl;
+	cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl;
 
 	rng::randomize();
 
+	cout << "PARSING COMPONENTS\n";
+	t1 = chrono::high_resolution_clock::now();
+
+	int comp = 1;
+	for(int i = 0; i < all_nodes.size(); i++) {
+		if(dfs(all_nodes[i], comp)) comp++;
+	}
+
+	t2 = chrono::high_resolution_clock::now();
+	cout << comp << " components\n";
+	cout << "DONE\n";
+	cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl;
+
+	cout << "STARTING PATHFINDING\n";
 	int iterations = 1;
 	if(argc > 1) iterations = atoi(argv[1]);
 	for(int i = 0; i < iterations; i++) {
+
 		point start = all_nodes[rng::random_int(0, all_nodes.size() - 1)];
 		cout << "Start node: " << coord_from_point(start) << endl;
-		//rng::mt_gen.discard(100); // advance the state to get a different random number
 		point end = all_nodes[rng::random_int(0, all_nodes.size() - 1)];
 		cout << "End node: " << coord_from_point(end) << endl;
 
 		vector<segment> path;
-		chrono::high_resolution_clock::time_point t1 = chrono::high_resolution_clock::now();
-		find_path(start, end, path);
-		chrono::high_resolution_clock::time_point t2 = chrono::high_resolution_clock::now();
+
+		t1 = chrono::high_resolution_clock::now();
+		cout << (find_path(start, end, path) ? "SUCCESS\n" : "FAILED\n");
+		t2 = chrono::high_resolution_clock::now();
 		cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl;
+
 		//cout << "Path segments: " << endl;
 		for (segment seg : path) {
 			//cout << seg.start << " -> " << seg.end << " (length: " << seg.length << " meters)" << endl;
