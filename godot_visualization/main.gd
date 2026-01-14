@@ -14,9 +14,13 @@ var s_gr = preload("res://s.tres")
 func _ready() -> void:
 	var output = []
 	OS.execute("pwd", [], output)
-	#OS.execute(EXE_PATH, [str(ITERATIONS)], output)
 	print("Running in: ", output[0])
+	#OS.execute(EXE_PATH, [str(ITERATIONS)], output)
 	#print(output[1])
+	#var t = Timer.new()
+	#add_child(t)
+	#t.start(5)
+	#await t.timeout
 	var lines = 0;
 	for line in FileAccess.open(OUT_PATH, FileAccess.READ).get_as_text().split("\n"):
 		if !line: continue

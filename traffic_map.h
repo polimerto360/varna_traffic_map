@@ -45,6 +45,9 @@ namespace traffic_sim
 
 	typedef int64_t point; // hash for node coordinates
 
+	uint64_t first_half(int32_t x) {
+		return (uint64_t)x & 0b1111111111111111;
+	}
 
 	point node_to_point(Node n) {
 		return (point)n.xy();
@@ -130,7 +133,7 @@ namespace traffic_sim
 		double max_speed; // maximum speed allowed on the segment
 		bool operator==(const segment& s) const
 		{
-			return s.start == start && s.end == end;
+			return s.start == start && s.end == end && s.length == length;
 		}
 
 		segment(const Node& s, const Node& e, const double ms, const double len = 0) {
@@ -156,10 +159,11 @@ namespace traffic_sim
 		}
 		segment() = default;
 
-		string h() const { // hash function (segment direction matters)
-			stringstream ss;
-			ss << hex << (point)start.x << (point)end.x << length;
-			return ss.str();
+		uint64_t h() const { // hash function (segment direction matters) - preserves as much information as possible while still being a 64 bit int
+			return (first_half(start.x) << 48) |
+			(first_half(start.y) << 32) |
+			(first_half(end.x) << 16) |
+			first_half(end.y);
 		}
 
 	};
@@ -173,7 +177,7 @@ namespace traffic_sim
 
 		person* driver;
 
-		car(const Coordinate pos, const double max_sp, segment seg, person dr) {
+		car(const Coordinate pos, const double max_sp, segment& seg, person& dr) {
 			position = pos;
 			cur_speed = 0.0;
 			max_speed = max_sp;
@@ -277,6 +281,6 @@ namespace traffic_sim
 template<>
 struct std::hash<traffic_sim::segment> {
 	size_t operator()(const traffic_sim::segment& s) const {
-		return hash<string>{}(s.h());
+		return s.h();
 	}
 };
