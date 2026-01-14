@@ -158,7 +158,7 @@ namespace traffic_sim
 
 		string h() const { // hash function (segment direction matters)
 			stringstream ss;
-			ss << hex << (point)start.x << (point)end.x;
+			ss << hex << (point)start.x << (point)end.x << length;
 			return ss.str();
 		}
 
@@ -245,6 +245,11 @@ namespace traffic_sim
 	namespace rng {
 		random_device rd;
 		static mt19937 mt_gen;
+
+		void randomize() {
+			uniform_int_distribution<int> dist;
+			mt_gen.seed(dist(rd));
+		}
 
 		int random_int(int min_val, int max_val) {
 			uniform_int_distribution<int> dist(min_val, max_val);

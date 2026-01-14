@@ -35,7 +35,8 @@ vector<point> all_nodes;
 unordered_map<segment, vector<segment>> long_segments; // key - long segment; value - short segments that compose it
 unordered_map<segment, segment> short_segments; // key - short segment; value - long segment it is a part of
 map<point, vector<segment>> long_graph; // adjacency list for the long segments
-ofstream out_file("out.txt", ofstream::trunc | ofstream::out);
+ofstream out_file("/home/polimerto/Desktop/Coding/varna_traffic_map/build/out.txt", ofstream::trunc | ofstream::out);
+//ifstream in_file("in.txt");
 
 
 int unique_neighbors(point p) {
@@ -204,7 +205,7 @@ Node* find(Features fs, int64_t id) {
 }
 */
 
-int main()
+int main(int argc, char *argv[])
 {
 
 
@@ -243,6 +244,7 @@ int main()
 	int count = 0;
 	// building graph
 
+	cout << "PARSING SEGMENTS...\n";
 	for (const Way& r : roads) {
 		double speed = (r.hasTag("maxspeed") ? stod(r["maxspeed"]) : DEFAULT_ROAD_SPEED);
 
@@ -277,8 +279,10 @@ int main()
 		}
 		//cout << "Road: " << r["name"] << ", Type: " << r["highway"] << ", Length: " << r.length() << " meters" << endl;
 	}
+	cout << "DONE\n";
 	cout << "Total segments: " << count << endl;
 
+	cout << "MERGING SEGMENTS...\n";
 	sort(all_nodes.begin(), all_nodes.end());
 	all_nodes.erase(unique(all_nodes.begin(), all_nodes.end()), all_nodes.end()); // remove duplicates
 
@@ -328,27 +332,35 @@ int main()
 	}
 	chrono::high_resolution_clock::time_point t4 = chrono::high_resolution_clock::now();
 
+	cout << "DONE\n";
 	cout << duration_cast<chrono::milliseconds>(t4 - t3) << " milliseconds" << endl;
 
-	point start = all_nodes[rng::random_int(0, all_nodes.size() - 1)];
-	cout << "Start node: " << coord_from_point(start) << endl;
-	//rng::mt_gen.discard(100); // advance the state to get a different random number
-	point end = all_nodes[rng::random_int(0, all_nodes.size() - 1)];
-	cout << "End node: " << coord_from_point(end) << endl;
+	rng::randomize();
 
-	vector<segment> path;
-	chrono::high_resolution_clock::time_point t1 = chrono::high_resolution_clock::now();
-	find_path(start, end, path);
-	chrono::high_resolution_clock::time_point t2 = chrono::high_resolution_clock::now();
-	cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl;
-	cout << "Path segments: " << endl;
-	for (segment seg : path) {
-		cout << seg.start << " -> " << seg.end << " (length: " << seg.length << " meters)" << endl;
-		output_segment(out_file, seg, 'c');
+	int iterations = 1;
+	if(argc > 1) iterations = atoi(argv[1]);
+	for(int i = 0; i < iterations; i++) {
+		point start = all_nodes[rng::random_int(0, all_nodes.size() - 1)];
+		cout << "Start node: " << coord_from_point(start) << endl;
+		//rng::mt_gen.discard(100); // advance the state to get a different random number
+		point end = all_nodes[rng::random_int(0, all_nodes.size() - 1)];
+		cout << "End node: " << coord_from_point(end) << endl;
+
+		vector<segment> path;
+		chrono::high_resolution_clock::time_point t1 = chrono::high_resolution_clock::now();
+		find_path(start, end, path);
+		chrono::high_resolution_clock::time_point t2 = chrono::high_resolution_clock::now();
+		cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl;
+		//cout << "Path segments: " << endl;
+		for (segment seg : path) {
+			//cout << seg.start << " -> " << seg.end << " (length: " << seg.length << " meters)" << endl;
+			output_segment(out_file, seg, 'c');
+		}
 	}
 	out_file.close();
 
 	// residential buildings
+	cout << "PARSING RESIDENTIAL BUILDINGS...\n";
 	count = 0;
 	for (const Way& a : residential_areas) {
 		//cout << "Residential Area: " << a["name"] << endl;
@@ -360,9 +372,11 @@ int main()
 			count += b.capacity;
 		}
 	}
+	cout << "DONE\n";
 	cout << "Total residents: " << count << endl;
 
 	// workplaces
+	cout << "PARSING WORKPLACES...\n";
 	Features workplace_features = features_in_varna("a[disused:shop=mall],a[building=office,industrial,school,kindergarten],a[shop],n[shop],n[amenity][amenity!=bicycle_parking,bicycle_repair_station,bicycle_rental,bicycle_wash,bus_station,compressed_air,charging_station,driver_training,grit_bin,motorcycle_parking,parking,parking_entrance,parking_space,taxi,weighbridge,atm,payment_terminal,baby_hatch,fountain,stage,studio,post_box,bbq,bench,check_in,dog_toilet,dressing_room,drinking_water,give_box,lounge,mailroom,parcel_locker,shelter,shower,telephone,toilets,water_point,watering_place,sanitary_dump_station,recycling,waste_basket,waste_disposal,baking_oven,clock,grave_yard,hunting_stand,kitchen,kneipp_water_cure,lounger,photo_booth,place_of_mourning,place_of_worship,public_bath,vending_machine,hydrant]");
 	vector<building> workplaces;
 
@@ -371,9 +385,10 @@ int main()
 	{
 		building b(f, building::WORKPLACE);
 		workplaces.push_back(b);
-		cout << "Workplace: " << b.name << ", Capacity: " << b.capacity << ", Location: " << b.location->centroid() << endl;
+		//cout << "Workplace: " << b.name << ", Capacity: " << b.capacity << ", Location: " << b.location->centroid() << endl;
 		count += b.capacity;
 	}
+	cout << "DONE\n";
 	cout << "Total positions: " << count << endl;
 	return 0;
 }
