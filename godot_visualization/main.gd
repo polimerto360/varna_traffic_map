@@ -29,11 +29,17 @@ func _ready() -> void:
 		l.add_point(Vector2( int(args[0])/100.0, int(args[1])/-100.0) )
 		l.add_point(Vector2( int(args[2])/100.0, int(args[3])/-100.0) )
 		if(args[4] == "f"): l.gradient = f_gr
-		if(args[4] == "r"): l.gradient = r_gr
-		if(args[4] == "k"): l.gradient = k_gr
+		if(args[4] == "r"): 
+			l.gradient = r_gr
+			l.z_index = 0
+		if(args[4] == "k"): 
+			l.gradient = k_gr
+			l.z_index = 99
 		if(args[4] == "c"): l.gradient = c_gr
 		if(args[4] == "l"): l.gradient = l_gr
-		if(args[4] == "s"): l.gradient = s_gr
+		if(args[4] == "s"): 
+			l.gradient = s_gr
+			l.z_index = 100
 		else:
 			l.default_color = Color.from_hsv(ord(args[4]) / 20.0, 1, 1)
 		add_child(l)

@@ -171,7 +171,7 @@ namespace traffic_sim
 		double max_speed; // maximum speed allowed on the segment
 		bool operator==(const segment& s) const
 		{
-			return s.start == start && s.end == end && s.length == length;
+			return s.start == start && s.end == end;// && s.length == length;
 		}
 
 		segment(const Node& s, const Node& e, const double ms, const double len = 0) {
@@ -206,6 +206,9 @@ namespace traffic_sim
 			stringstream ss;
 			ss << hex << (point)start.x << (point)end.x << length;
 			return ss.str();
+		}
+		bool weak_equals(point p1, point p2) const {
+			return ( ((point)start == p1 && (point)end == p2) || ((point)start == p2 && (point)end == p1) );
 		}
 
 	};
@@ -416,7 +419,7 @@ namespace pathfinding {
 	//map<point, int> connected_to; // how many points are connected with one way inward connection to each point
 	map<point, int> component;
 	map<point, vector<point>> weak_connections; // connections from another point to the key point
-	unordered_map<segment, vector<segment>> long_segments; // key - long segment; value - short segments that compose it
+	unordered_map<segment, vector<segment*>> long_segments; // key - long segment; value - short segments that compose it
 	unordered_map<segment, segment> short_segments; // key - short segment; value - long segment it is a part of
 	map<point, vector<segment>> long_graph; // adjacency list for the long segments
 	//ifstream in_file("in.txt");
@@ -456,8 +459,9 @@ namespace pathfinding {
 	}
 
 
-	void walk_forward(const segment& s, vector<segment>& out) {
-		out.push_back(s);
+	void walk_forward(segment& s, vector<segment*>& out) {
+		out.push_back(&s);
+		point last = (point)s.start;
 		point curr = (point)s.end;
 		unordered_set<point> cur_visited; // for O(1)
 		cur_visited.insert((point)s.start); // this sets the direction to explore - depends on the direction of s
@@ -467,30 +471,39 @@ namespace pathfinding {
 			// if it has one or two neighbours we can be sure that there can't be a split path ahead - there is either 1 or 0 possible nodes to continue to
 			int ind = -1; // ind is the index of the next edge on the adjacency list
 			for(int i = 0; i < graph[curr].size(); i++) {
-				if(cur_visited.contains((point)graph[curr][i].end)) continue;
+				if(cur_visited.contains((point)graph[curr][i].end) && graph[curr][i].weak_equals(last, curr)) continue;
 				ind = i;
 				break;
 			}
 			if(ind == -1) return;
-			out.push_back(graph[curr][ind]);
+			out.push_back(&graph[curr][ind]);
 			cur_visited.insert((point)graph[curr][ind].end);
+			last = curr;
 			curr = (point)graph[curr][ind].end;
 		}
 	}
 
-	bool find_path(point from, point to, vector<segment>& path) {
+	bool find_path(point from, point to, vector<segment*>& path) {
 		// A* with compressed graph; 86 ms for vladislavovo - zelenika
 
 		auto t1 = chrono::high_resolution_clock::now();
 		(void)(VERBOSE && cout << "STARTED A*" << endl);
 
 		if(!is_init || component[from] != component[to]) return false;
+
+		vector<segment*> first_steps;
+
+		while(graph[from].size() == 1) {
+			first_steps.push_back(&graph[from][0]);
+			from = (point)graph[from][0].end;
+		}
+		reverse(first_steps.begin(), first_steps.end());
 		if(unique_neighbors(from) == 0 || unique_neighbors(to) == 0 || is_dead_end(from) || is_source(to)) return from == to;
 		visited.clear();
 		for (point p : all_nodes) dist[p] = 1e20;
 		dist[from] = 0.0;
 		visited[from] = true;
-		map<point, segment> came_from;
+		map<point, segment*> came_from;
 		// if 'to' has more than 2 neighbors or is a dead end, it is the target.
 		point long_target = to;
 		segment* target_segment = nullptr;
@@ -498,7 +511,7 @@ namespace pathfinding {
 			// not a dead end and not a source, so there is exactly one outward edge
 			int ind = 0;
 
-			assert(short_segments.contains(graph[to][ind]));
+			//assert(short_segments.contains(graph[to][ind]));
 			long_target = (point)short_segments[graph[to][ind]].start;
 			target_segment = &short_segments[graph[to][ind]];
 		}
@@ -512,15 +525,15 @@ namespace pathfinding {
 		priority_queue < pq_item, vector<pq_item>, decltype(cmp)> pq(cmp);
 
 		if(unique_neighbors(from) == 2) { // we know there is at least one real connection - if it's the only one, the point is a start of a long segment
-			for(const segment& s : graph[from]) {
-				vector<segment> p;
+			for(segment& s : graph[from]) {
+				vector<segment*> p;
 				walk_forward(s, p);
 				double total_dist = 0;
-				for(const segment& seg : p) {
-					came_from[(point)seg.end] = seg;
-					total_dist += seg.length;
+				for(segment* seg : p) {
+					came_from[(point)seg->end] = seg;
+					total_dist += seg->length;
 				}
-				point end_point = (point)p[p.size()-1].end;
+				point end_point = (point)p[p.size()-1]->end;
 				assert(long_graph.contains(end_point));
 				visited[(point)end_point] = true;
 				pq.emplace( total_dist, coord_dist(end_point, to), end_point );
@@ -537,28 +550,29 @@ namespace pathfinding {
 			pq.pop();
 			if (cur_point == long_target) {
 				if(target_segment != nullptr) {
-					const vector<segment>& final = long_segments[*target_segment];
+					vector<segment*>& final = long_segments[*target_segment];
 					for(int i = final.size()-1; i >= 0; i--) { // segment array is pre-reversed on purpose
 						path.push_back(final[i]);
-						if((point)final[i].end == to) break;
+						if((point)final[i]->end == to) break;
 					}
 				}
 				reverse(path.begin(), path.end());
 
 
 				while(came_from.contains(cur_point)) {
-					segment cur_seg = came_from[cur_point];
+					segment cur_seg = *came_from[cur_point];
 					if(long_segments.contains(cur_seg)) {
-						for(const segment& short_seg : long_segments[cur_seg]) {
+						for(segment* short_seg : long_segments[cur_seg]) {
 							path.push_back(short_seg);
 						}
 					} else {
-						path.push_back(cur_seg);
+						path.push_back(&cur_seg);
 					}
-					cur_point = (point)came_from[cur_point].start;
+					cur_point = (point)came_from[cur_point]->start;
 				}
 
 
+				for(segment* sp : first_steps) path.push_back(sp);
 				reverse(path.begin(), path.end());
 
 				auto t2 = chrono::high_resolution_clock::now();
@@ -567,7 +581,7 @@ namespace pathfinding {
 			}
 			visited[cur_point] = true;
 
-			for (const segment& seg : long_graph[cur_point]) {
+			for (segment& seg : long_graph[cur_point]) {
 				point next_point = (point)seg.end;
 				double seg_length = seg.length;
 				//cout << "    Segment: " << seg << endl;
@@ -575,7 +589,7 @@ namespace pathfinding {
 				double new_dist = cur_dist + seg_length;
 				if (!visited[next_point] && new_dist < dist[next_point]) {
 					dist[next_point] = new_dist;
-					came_from[next_point] = seg;
+					came_from[next_point] = &seg;
 					pq.push({ new_dist, coord_dist(next_point, long_target), next_point });
 				}
 			}
@@ -585,13 +599,13 @@ namespace pathfinding {
 		return false;
 	}
 
-	bool find_path(const building& from, const building& to, vector<segment>& path) {
+	bool find_path(const building& from, const building& to, vector<segment*>& path) {
 		if(!from.road_connection) from.road_connection = closest_point(from.location);
 		if(!to.road_connection) to.road_connection = closest_point(from.location);
 		return find_path(from.road_connection, to.road_connection, path);
 	}
 
-	void graph_init(Ways& roads, ostream* out_file = nullptr) {
+	void graph_init(Ways& roads) {
 		int seg_count = 0;
 		(void)(VERBOSE && cout << "BUILDING GRAPH" << endl);
 
@@ -614,7 +628,7 @@ namespace pathfinding {
 
 				segment seg(from, to, speed);
 				graph[from].push_back(seg); // add the segment to the adjacency list for the starting point
-				if(out_file) output_segment(*out_file, seg, 'f');
+				output_segment(out_file, seg, 'f');
 				seg_count++;
 
 				if (r["oneway"] == "yes" || r["oneway"] == "true" || r["oneway"] == "1") {
@@ -625,7 +639,7 @@ namespace pathfinding {
 
 				segment newseg(to, from, speed);
 				graph[to].push_back(newseg);
-				if(out_file) output_segment(*out_file, newseg, 'r');
+				output_segment(out_file, newseg, 'r');
 				seg_count++;
 
 			}
@@ -655,12 +669,12 @@ namespace pathfinding {
 			// RUNS FOR ABOUT 1200ms with O(N) time complexity
 			// we need to process only the points with more than 2 neighbors, and the ones with 1 neighbor, as they would be skipped completely otherwise
 			if( (unique_neighbors(p) == 0) || (unique_neighbors(p) == 2) ) continue;
-			for(const segment& s : graph[p]) {
+			for(segment& s : graph[p]) {
 				// if we have already processed the segment, there's no need to check it again
-				if(short_segments.find(s) != short_segments.end()) continue;
+				//if(short_segments.contains(s)) continue;
 				point from = (point)s.start;
 
-				vector<segment> long_segment;
+				vector<segment*> long_segment;
 				//long_segment.push_back(s);
 
 				// these two are for setting the long edge's length and max speed
@@ -671,29 +685,31 @@ namespace pathfinding {
 				walk_forward(s, long_segment);
 				reverse(long_segment.begin(), long_segment.end());
 
-				for(segment& ss : long_segment) {
-					total_dist += ss.length;
-					total_time += ss.max_speed;
+				for(segment* ss : long_segment) {
+					total_dist += ss->length;
+					total_time += ss->max_speed;
 				}
 				double total_speed = total_dist / total_time;
 
-				point to = (point)long_segment[0].end; //last point
+				point to = (point)long_segment[0]->end; //last point
 
 				// here our long segment is (from, to), and its composing short segments are stored in long_segment
 				segment l(from, to, total_speed, total_dist);
-				if(out_file) output_segment(*out_file, l, 'l');
+				output_segment(out_file, l, 'l');
 				long_segments[l] = long_segment;
 				long_graph[(point)l.start].push_back(l);
-				for(const segment &short_segment : long_segment) {
+				for(segment* short_segment : long_segment) {
 					//assert(short_segment.real);
 					//if(short_segments.find(s) == short_segments.end()) {
-					short_segments[short_segment] = l;
+					short_segments[*short_segment] = l;
 					//cout << "adding hash " << short_segment.h() << endl;
-					//output_segment(out_file, short_segment, 's');
+					output_segment(out_file, *short_segment, (short_segment->start.x > short_segment->end.x) ? 's' : 'k');
 					//}
 				}
 			}
 		}
+
+		//assert(short_segments.size() == seg_count); // 24 loose segments...
 
 		if(VERBOSE) t2 = chrono::high_resolution_clock::now();
 		(void)(VERBOSE && cout << "DONE" << endl);

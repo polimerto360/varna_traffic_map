@@ -3,9 +3,11 @@
 #
 cmake_minimum_required (VERSION 3.8)
 
-project ("traffic_map")
+#project ("traffic_map" LANGUAGES CXX CUDA)
+project ("traffic_map" LANGUAGES CXX)
 
 # Add source to this project's executable.
+#add_executable (traffic_map "traffic_map.cu" "traffic_map.h")
 add_executable (traffic_map "traffic_map.cpp" "traffic_map.h")
 
 # TODO: Add tests and install targets if needed.
@@ -18,5 +20,6 @@ FetchContent_Declare(geodesk GIT_REPOSITORY
 FetchContent_MakeAvailable(geodesk)
 
 target_link_libraries(traffic_map geodesk)
+#set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

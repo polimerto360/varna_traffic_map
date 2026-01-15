@@ -54,12 +54,24 @@ int main(int argc, char *argv[])
 
 
 	// building graph
-	graph_init(roads, &out_file);
+	graph_init(roads);
 
 	rng::randomize();
 	cout << "STARTING PATHFINDING\n";
-	int iterations = 100;
+	int iterations = 0;
 	if(argc > 1) iterations = atoi(argv[1]);
+	// int progress = 0;
+	// for(point start : all_nodes) {
+	// 	if(progress++ < 100000) continue;
+	// 	cout << "progress: " << progress << " / " << all_nodes.size() << endl;
+	// 	cout << "Start node: " << coord_from_point(start) << endl;
+	// 	point end = all_nodes[rng::random_int(0, all_nodes.size() - 1)];
+	// 	cout << "End node: " << coord_from_point(end) << endl;
+	// 	vector<segment*> path;
+	// 	cout << (find_path(start, end, path) ? "SUCCESS\n" : "FAILED\n");
+	// 	progress++;
+ //
+	// }
 	for(int i = 0; i < iterations; i++) {
 
 		point start = all_nodes[rng::random_int(0, all_nodes.size() - 1)];
@@ -67,14 +79,14 @@ int main(int argc, char *argv[])
 		point end = all_nodes[rng::random_int(0, all_nodes.size() - 1)];
 		cout << "End node: " << coord_from_point(end) << endl;
 
-		vector<segment> path;
+		vector<segment*> path;
 
 		cout << (find_path(start, end, path) ? "SUCCESS\n" : "FAILED\n");
 
 		//cout << "Path segments: " << endl;
-		for (segment& seg : path) {
+		for (segment* seg : path) {
 			//cout << seg.start << " -> " << seg.end << " (length: " << seg.length << " meters)" << endl;
-			output_segment(out_file, seg, 'c');
+			output_segment(out_file, *seg, 'c');
 		}
 	}
 	out_file.close();
