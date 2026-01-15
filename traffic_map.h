@@ -19,6 +19,11 @@
 // TODO: Reference additional headers your program requires here.
 
 namespace config {
+	bool VERBOSE = true;
+
+	std::ofstream out_file("out.txt", std::ofstream::trunc | std::ofstream::out);
+
+
 	const double TIME_STEP = 1.0; // time step in seconds
 	const double DEFAULT_BUILDING_HEIGHT = 5.0; // default building height in meters
 	// target workplaces is 150000
@@ -99,28 +104,61 @@ namespace traffic_sim
 		return coord_dist_accurate(coord_from_point(a), coord_from_point(b));
 	}
 	double coord_dist(point a, point b) {
+		if(a == b) return 0;
 		return coord_dist(coord_from_point(a), coord_from_point(b));
 	}
 
+	namespace rng {
+		random_device rd;
+		static mt19937 mt_gen;
+
+		void randomize() {
+			uniform_int_distribution<int> dist;
+			mt_gen.seed(dist(rd));
+		}
+
+		int random_int(int min_val, int max_val) {
+			uniform_int_distribution<int> dist(min_val, max_val);
+			return dist(mt_gen);
+		}
+		double random_double(double min_val, double max_val) {
+			uniform_real_distribution<double> dist(min_val, max_val);
+			return dist(mt_gen);
+		}
+		double normal_double(double mean, double stddev) {
+			normal_distribution<double> dist(mean, stddev);
+			return dist(mt_gen);
+		}
+		bool random_chance(double probability) {
+			uniform_real_distribution<double> dist(0.0, 1.0);
+			return dist(mt_gen) < probability;
+		}
+		double power_law_double(double min_val, double max_val, double exponent) {
+			double r = random_double(0.0, 1.0);
+			double scaled = pow(r, exponent);
+			return min_val + (max_val - min_val) * scaled;
+		}
+	};
+
 	struct segment; // forward declarations
-	struct person; 
-	struct workplace;
+	struct person;
+	struct building;
 	struct car;
+
 
 	struct person {
 		string name;
 		int age;
 		bool can_drive;
-		Feature* home;
+		const building* home;
 
-		workplace* work; // or any place that is visited regularly
+		building* work = nullptr; // or any place that is visited regularly
 
-		person(string n, int a, bool cd, Feature* h, workplace* w) {
+		person(string n, int a, bool cd, const building& h) {
 			name = n;
 			age = a;
 			can_drive = cd;
-			home = h;
-			work = w;
+			home = &h;
 		}
 	};
 
@@ -159,15 +197,57 @@ namespace traffic_sim
 		}
 		segment() = default;
 
-		uint64_t h() const { // hash function (segment direction matters) - preserves as much information as possible while still being a 64 bit int
-			return (first_half(start.x) << 48) |
-			(first_half(start.y) << 32) |
-			(first_half(end.x) << 16) |
-			first_half(end.y);
+		// uint64_t h() const { // hash function (segment direction matters) - preserves as much information as possible while still being a 64 bit int
+		// 	return  *(uint64_t *)(&length) ^ ((first_half(start.x) << 48) |
+		// 	(first_half(start.y) << 32) |
+		// 	(first_half(end.x) << 16) |
+		// 	first_half(end.y));
+		string h() const { // hash function (segment direction matters)
+			stringstream ss;
+			ss << hex << (point)start.x << (point)end.x << length;
+			return ss.str();
 		}
 
 	};
 
+
+	static ostream& operator<<(ostream& out, const Coordinate& coord)
+	{
+		out << "(" << Mercator::latFromY(coord.y) << ", " << Mercator::lonFromX(coord.x) << ")";
+		return out;
+	}
+
+	static ostream& operator<<(ostream& out, const segment& seg)
+	{
+		out << seg.start << " -> " << seg.end << "; len = " << seg.length;
+		return out;
+	}
+
+	void output_segment(ostream& out, const segment& seg, char type) {
+		out << seg.start.x << " " << seg.start.y << " " << seg.end.x << " " << seg.end.y << " " << type << endl;
+		return;
+	}
+
+
+
+	bool is_init = false;
+	vector<point> all_nodes;
+
+	point closest_point(Coordinate x) {
+		point x_p = (point)x;
+		point cur_p;
+		double min_dist = 1e20;
+		for(point& p : all_nodes) {
+			double cur_dist = coord_dist(x_p, p);
+			if(cur_dist == 0) return x_p;
+
+			if(cur_dist < min_dist) {
+				min_dist = cur_dist;
+				cur_p = p;
+			}
+		}
+		return cur_p;
+	}
 
 	struct car {
 		Coordinate position;
@@ -190,27 +270,32 @@ namespace traffic_sim
 		enum building_type {
 			RESIDENTIAL,
 			WORKPLACE,
+			SCHOOL,
 			ENTERTAINMENT
 		};
 		string name;
 		building_type type;
-		Feature* location;
+		Coordinate location;
+		mutable point road_connection = 0;
 		int capacity; // number of residents/people/employees
 		int cur_employees = 0;
 
-		building(Feature loc, building_type t, double people_density = 0.0) {
+		building(const Feature& loc, building_type t, double people_density = 0.0) {
+			assert(is_init);
 			name = loc["name"].storedString();
 			type = t;
-			
+
 			if(name == "") {
 				if (t == RESIDENTIAL) name = "Unnamed Residential Building";
 				else if(t == ENTERTAINMENT) name = "Unnamed Entertainment Building";
 				else name = "Unnamed Workplace";
 			}
 
-			location = &loc;
+			location = loc.centroid();
+			//road_connection = closest_point(loc.centroid()); // too slow to do on initialization
+
 			double height = DEFAULT_BUILDING_HEIGHT;
-			
+
 			if(loc.hasTag("height")) {
 				height = stod(loc["height"]);
 			}
@@ -228,6 +313,7 @@ namespace traffic_sim
 					min_cap = MIN_VISITORS;
 					break;
 				case WORKPLACE:
+				case SCHOOL:
 					if (people_density == 0.0)
 						people_density = EMPLOYEE_DENSITY; // employees per cubic meter
 					min_cap = MIN_EMPLOYEES;
@@ -246,41 +332,385 @@ namespace traffic_sim
 		vector<person*> passengers;
 	};
 
-	namespace rng {
-		random_device rd;
-		static mt19937 mt_gen;
+	map<int64_t, vector<building>> residential_buildings; // map of residential area id to buildings in that area; initialized in main
+	vector<person> people;
+	vector<building> workplaces;
 
-		void randomize() {
-			uniform_int_distribution<int> dist;
-			mt_gen.seed(dist(rd));
+	void people_init() {
+		(void)(VERBOSE && cout << "GENERATING PEOPLE" << endl);
+		auto t1 = chrono::high_resolution_clock::now();
+
+		for(auto& rb : residential_buildings) {
+			for(const building& b : rb.second) {
+				for(int i = 0; i < b.capacity; i++) {
+					int age = rng::random_int(0, 80);
+					bool can_drive;
+					if(age < 18) can_drive = false;
+					else if(age < 50) can_drive = rng::random_chance(0.8);
+					else can_drive = rng::random_chance(0.5);
+
+					person p("", age, can_drive, b);
+					people.push_back(p);
+				}
+			}
 		}
 
-		int random_int(int min_val, int max_val) {
-			uniform_int_distribution<int> dist(min_val, max_val);
-			return dist(mt_gen);
+
+		auto t2 = chrono::high_resolution_clock::now();
+		(void)(VERBOSE && cout << "DONE" << endl);
+		(void)(VERBOSE && cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl);
+
+	}
+	void workplaces_init(Features& workplace_features) {
+		(void)(VERBOSE && cout << "PARSING WORKPLACES" << endl);
+		auto t1 = chrono::high_resolution_clock::now();
+
+		int count = 0;
+		for (const Feature& f : workplace_features)
+		{
+			workplaces.emplace_back(f, (f["building"] == "school") ? building::SCHOOL : building::WORKPLACE);
+			//cout << "Workplace: " << b.name << ", Capacity: " << b.capacity << ", Location: " << coord_from_point(b.location) << endl;
+			count += workplaces.back().capacity;
 		}
-		double random_double(double min_val, double max_val) {
-			uniform_real_distribution<double> dist(min_val, max_val);
-			return dist(mt_gen);
+
+		for(building& w : workplaces) {
+			for(int i = 0; i < w.capacity; i++) {
+
+				while(true) {
+					person& p = people[rng::random_int(0, people.size()-1)];
+					if(p.work) continue;
+					if(p.age <= 6) break;
+					if(w.type == building::SCHOOL) {
+						if(p.age <= 18 || rng::random_chance(0.1)) {p.work = &w; break;}
+					} else {
+						if(p.age >= 18 && p.age <= 63) {p.work = &w; break;}
+					}
+
+				}
+
+			}
 		}
-		double normal_double(double mean, double stddev) {
-			normal_distribution<double> dist(mean, stddev);
-			return dist(mt_gen);
-		}
-		bool random_chance(double probability) {
-			uniform_real_distribution<double> dist(0.0, 1.0);
-			return dist(mt_gen) < probability;
-		}
-		double power_law_double(double min_val, double max_val, double exponent) {
-			double r = random_double(0.0, 1.0);
-			double scaled = pow(r, exponent);
-			return min_val + (max_val - min_val) * scaled;
-		}
-	};
+		auto t2 = chrono::high_resolution_clock::now();
+		(void)(VERBOSE && cout << "Total positions: " << count << endl);
+		(void)(VERBOSE && cout << "DONE" << endl);
+		(void)(VERBOSE && cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl);
+	}
 }
 template<>
 struct std::hash<traffic_sim::segment> {
 	size_t operator()(const traffic_sim::segment& s) const {
-		return s.h();
+		return hash<string>{}(s.h());
 	}
 };
+
+
+namespace pathfinding {
+	using namespace std;
+	using namespace traffic_sim;
+	using namespace geodesk;
+	using namespace config;
+
+	map<point, vector<segment>> graph; // adjacency list representation of the road network graph
+	map<point, bool> visited;
+	map<point, double> dist;
+	//map<point, int> connected_to; // how many points are connected with one way inward connection to each point
+	map<point, int> component;
+	map<point, vector<point>> weak_connections; // connections from another point to the key point
+	unordered_map<segment, vector<segment>> long_segments; // key - long segment; value - short segments that compose it
+	unordered_map<segment, segment> short_segments; // key - short segment; value - long segment it is a part of
+	map<point, vector<segment>> long_graph; // adjacency list for the long segments
+	//ifstream in_file("in.txt");
+
+
+	int unique_neighbors(point p) {
+		// all segments represent a unique neighbor
+		return graph[p].size() + weak_connections[p].size();
+	}
+
+	bool is_dead_end(point p) {
+		return graph[p].size() == 0;
+	}
+
+	bool is_source(point p) { // called only once, so no need to be very fast
+		if(weak_connections[p].size() > 0) return false;
+		for(const segment& s : graph[p]) {
+			for(const segment& s1 : graph[(point)s.end]) {
+				if(s1.end == s.start) return false;
+			}
+		}
+		return true;
+	}
+
+	bool dfs(point p, int comp) {
+		if(visited[p]) return false;
+		visited[p] = true;
+		component[p] = comp;
+
+		for(const segment& s : graph[p]) {
+			//output_segment(out_file, s, '0' + comp);
+			dfs((point)s.end, comp);
+		}
+		for(point p2 : weak_connections[p])
+			dfs(p2, comp);
+		return true;
+	}
+
+
+	void walk_forward(const segment& s, vector<segment>& out) {
+		out.push_back(s);
+		point curr = (point)s.end;
+		unordered_set<point> cur_visited; // for O(1)
+		cur_visited.insert((point)s.start); // this sets the direction to explore - depends on the direction of s
+		cur_visited.insert(curr);
+		//assert(graph[curr].size() > 0);
+		while(graph.contains(curr) && (unique_neighbors(curr) == 2 || unique_neighbors(curr) == 1) ) {
+			// if it has one or two neighbours we can be sure that there can't be a split path ahead - there is either 1 or 0 possible nodes to continue to
+			int ind = -1; // ind is the index of the next edge on the adjacency list
+			for(int i = 0; i < graph[curr].size(); i++) {
+				if(cur_visited.contains((point)graph[curr][i].end)) continue;
+				ind = i;
+				break;
+			}
+			if(ind == -1) return;
+			out.push_back(graph[curr][ind]);
+			cur_visited.insert((point)graph[curr][ind].end);
+			curr = (point)graph[curr][ind].end;
+		}
+	}
+
+	bool find_path(point from, point to, vector<segment>& path) {
+		// A* with compressed graph; 86 ms for vladislavovo - zelenika
+
+		auto t1 = chrono::high_resolution_clock::now();
+		(void)(VERBOSE && cout << "STARTED A*" << endl);
+
+		if(!is_init || component[from] != component[to]) return false;
+		if(unique_neighbors(from) == 0 || unique_neighbors(to) == 0 || is_dead_end(from) || is_source(to)) return from == to;
+		visited.clear();
+		for (point p : all_nodes) dist[p] = 1e20;
+		dist[from] = 0.0;
+		visited[from] = true;
+		map<point, segment> came_from;
+		// if 'to' has more than 2 neighbors or is a dead end, it is the target.
+		point long_target = to;
+		segment* target_segment = nullptr;
+		if(unique_neighbors(to) <= 2 && !is_dead_end(to)) {
+			// not a dead end and not a source, so there is exactly one outward edge
+			int ind = 0;
+
+			assert(short_segments.contains(graph[to][ind]));
+			long_target = (point)short_segments[graph[to][ind]].start;
+			target_segment = &short_segments[graph[to][ind]];
+		}
+
+		//assert(long_graph.contains(long_target)); // long target can be at the end - contains checks only for the beginning
+
+		typedef tuple<double, double, point> pq_item;
+		auto cmp = [](pq_item a, pq_item b) {
+			return get<0>(a) + get<1>(a) > get<0>(b) + get<1>(b);
+		};
+		priority_queue < pq_item, vector<pq_item>, decltype(cmp)> pq(cmp);
+
+		if(unique_neighbors(from) == 2) { // we know there is at least one real connection - if it's the only one, the point is a start of a long segment
+			for(const segment& s : graph[from]) {
+				vector<segment> p;
+				walk_forward(s, p);
+				double total_dist = 0;
+				for(const segment& seg : p) {
+					came_from[(point)seg.end] = seg;
+					total_dist += seg.length;
+				}
+				point end_point = (point)p[p.size()-1].end;
+				assert(long_graph.contains(end_point));
+				visited[(point)end_point] = true;
+				pq.emplace( total_dist, coord_dist(end_point, to), end_point );
+			}
+		} else {
+			assert(long_graph.contains(from));
+			pq.emplace( 0.0, coord_dist(from, long_target), from );
+		}
+		while(!pq.empty()) {
+			//TODO: include segment speed in a*
+			auto [cur_dist, _, cur_point] = pq.top();
+			//assert((double)_ != nan);
+			//cout << "Current point: " << coord_from_point(cur_point) << " dist: " << cur_dist << endl;
+			pq.pop();
+			if (cur_point == long_target) {
+				if(target_segment != nullptr) {
+					const vector<segment>& final = long_segments[*target_segment];
+					for(int i = final.size()-1; i >= 0; i--) { // segment array is pre-reversed on purpose
+						path.push_back(final[i]);
+						if((point)final[i].end == to) break;
+					}
+				}
+				reverse(path.begin(), path.end());
+
+
+				while(came_from.contains(cur_point)) {
+					segment cur_seg = came_from[cur_point];
+					if(long_segments.contains(cur_seg)) {
+						for(const segment& short_seg : long_segments[cur_seg]) {
+							path.push_back(short_seg);
+						}
+					} else {
+						path.push_back(cur_seg);
+					}
+					cur_point = (point)came_from[cur_point].start;
+				}
+
+
+				reverse(path.begin(), path.end());
+
+				auto t2 = chrono::high_resolution_clock::now();
+				(void)(VERBOSE && cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl);
+				return true;
+			}
+			visited[cur_point] = true;
+
+			for (const segment& seg : long_graph[cur_point]) {
+				point next_point = (point)seg.end;
+				double seg_length = seg.length;
+				//cout << "    Segment: " << seg << endl;
+				//output_segment(out_file, seg, 'c');
+				double new_dist = cur_dist + seg_length;
+				if (!visited[next_point] && new_dist < dist[next_point]) {
+					dist[next_point] = new_dist;
+					came_from[next_point] = seg;
+					pq.push({ new_dist, coord_dist(next_point, long_target), next_point });
+				}
+			}
+		}
+		auto t2 = chrono::high_resolution_clock::now();
+		(void)(VERBOSE && cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl);
+		return false;
+	}
+
+	bool find_path(const building& from, const building& to, vector<segment>& path) {
+		if(!from.road_connection) from.road_connection = closest_point(from.location);
+		if(!to.road_connection) to.road_connection = closest_point(from.location);
+		return find_path(from.road_connection, to.road_connection, path);
+	}
+
+	void graph_init(Ways& roads, ostream* out_file = nullptr) {
+		int seg_count = 0;
+		(void)(VERBOSE && cout << "BUILDING GRAPH" << endl);
+
+		chrono::high_resolution_clock::time_point t1 = chrono::high_resolution_clock::now();
+
+
+		for (const Way& r : roads) {
+			double speed = (r.hasTag("maxspeed") ? stod(r["maxspeed"]) : DEFAULT_ROAD_SPEED);
+
+			vector<Node> node_list; // nodes, composing the current Way
+			r.nodes().addTo(node_list); // converting from Nodes to a vector is neccessary for random access
+
+			for (int i = 0; i < node_list.size() - 1; i++) { // iterate through them in pairs
+				point from = node_to_point(node_list[i]);
+				point to = node_to_point(node_list[i + 1]);
+
+				all_nodes.push_back(from);
+				all_nodes.push_back(to);
+
+
+				segment seg(from, to, speed);
+				graph[from].push_back(seg); // add the segment to the adjacency list for the starting point
+				if(out_file) output_segment(*out_file, seg, 'f');
+				seg_count++;
+
+				if (r["oneway"] == "yes" || r["oneway"] == "true" || r["oneway"] == "1") {
+					weak_connections[to].push_back(from);
+					continue; // for one way roads skip
+				}
+
+
+				segment newseg(to, from, speed);
+				graph[to].push_back(newseg);
+				if(out_file) output_segment(*out_file, newseg, 'r');
+				seg_count++;
+
+			}
+			//cout << "Road: " << r["name"] << ", Type: " << r["highway"] << ", Length: " << r.length() << " meters" << endl;
+		}
+		chrono::high_resolution_clock::time_point t2 = chrono::high_resolution_clock::now();
+
+		(void)(VERBOSE && cout << "Segments: " << seg_count << endl);
+		(void)(VERBOSE && cout << "DONE" << endl);
+
+		(void)(VERBOSE && cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl);
+
+		(void)(VERBOSE && cout << "REMOVING DUPLICATES" << endl);
+		if(VERBOSE) t1 = chrono::high_resolution_clock::now();
+
+		sort(all_nodes.begin(), all_nodes.end());
+		all_nodes.erase(unique(all_nodes.begin(), all_nodes.end()), all_nodes.end()); // remove duplicates
+
+		if(VERBOSE) t2 = chrono::high_resolution_clock::now();
+		(void)(VERBOSE && cout << "DONE" << endl);
+		(void)(VERBOSE && cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl);
+
+		(void)(VERBOSE && cout << "MERGING GRAPH" << endl);
+		if(VERBOSE) t1 = chrono::high_resolution_clock::now();
+
+		for(point p : all_nodes) { // compressing graph - merging series of segments with only one edge (short_segment) into one (long_segment) (for faster pathfinding)
+			// RUNS FOR ABOUT 1200ms with O(N) time complexity
+			// we need to process only the points with more than 2 neighbors, and the ones with 1 neighbor, as they would be skipped completely otherwise
+			if( (unique_neighbors(p) == 0) || (unique_neighbors(p) == 2) ) continue;
+			for(const segment& s : graph[p]) {
+				// if we have already processed the segment, there's no need to check it again
+				if(short_segments.find(s) != short_segments.end()) continue;
+				point from = (point)s.start;
+
+				vector<segment> long_segment;
+				//long_segment.push_back(s);
+
+				// these two are for setting the long edge's length and max speed
+				double total_dist = 0;
+				double total_time = 0;
+
+				// this loops through the edges until we find a crossing (point with at least 2 edges that are not our current point)
+				walk_forward(s, long_segment);
+				reverse(long_segment.begin(), long_segment.end());
+
+				for(segment& ss : long_segment) {
+					total_dist += ss.length;
+					total_time += ss.max_speed;
+				}
+				double total_speed = total_dist / total_time;
+
+				point to = (point)long_segment[0].end; //last point
+
+				// here our long segment is (from, to), and its composing short segments are stored in long_segment
+				segment l(from, to, total_speed, total_dist);
+				if(out_file) output_segment(*out_file, l, 'l');
+				long_segments[l] = long_segment;
+				long_graph[(point)l.start].push_back(l);
+				for(const segment &short_segment : long_segment) {
+					//assert(short_segment.real);
+					//if(short_segments.find(s) == short_segments.end()) {
+					short_segments[short_segment] = l;
+					//cout << "adding hash " << short_segment.h() << endl;
+					//output_segment(out_file, short_segment, 's');
+					//}
+				}
+			}
+		}
+
+		if(VERBOSE) t2 = chrono::high_resolution_clock::now();
+		(void)(VERBOSE && cout << "DONE" << endl);
+		(void)(VERBOSE && cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl);
+
+		(void)(VERBOSE && cout << "MARKING COMPONENTS" << endl);
+		if(VERBOSE) t1 = chrono::high_resolution_clock::now();
+
+		int comp = 1;
+		for(int i = 0; i < all_nodes.size(); i++) {
+			if(dfs(all_nodes[i], comp)) comp++;
+		}
+
+		if(VERBOSE) t2 = chrono::high_resolution_clock::now();
+		(void)(VERBOSE && cout << "DONE" << endl);
+		(void)(VERBOSE && cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl);
+
+		is_init = true;
+	}
+}
