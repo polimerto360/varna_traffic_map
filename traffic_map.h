@@ -38,6 +38,7 @@ namespace config {
 	const int MIN_VISITORS = 5; 
 	
 	const double DEFAULT_ROAD_SPEED = 50.0; // default road speed in km/h
+	const double DEFAULT_CAR_RADIUS = 3.0;
 
 	//const int NUM_CARS = 1000; // total number of cars in the simulation
 }
@@ -49,6 +50,12 @@ namespace traffic_sim
 	using namespace config;
 
 	typedef int64_t point; // hash for node coordinates
+
+	double cur_time = 0; //seconds (0 - 86400)
+
+	double time_hms(int hours, int minutes, double seconds) {
+		return hours * 3600 + minutes * 60 + seconds;
+	}
 
 	uint64_t first_half(int32_t x) {
 		return (uint64_t)x & 0b1111111111111111;
@@ -125,6 +132,10 @@ namespace traffic_sim
 			uniform_real_distribution<double> dist(min_val, max_val);
 			return dist(mt_gen);
 		}
+		double normal_int(double mean, double stddev) {
+			normal_distribution<double> dist(mean, stddev);
+			return (int)round(dist(mt_gen));
+		}
 		double normal_double(double mean, double stddev) {
 			normal_distribution<double> dist(mean, stddev);
 			return dist(mt_gen);
@@ -169,17 +180,31 @@ namespace traffic_sim
 
 		vector<car*> cars;
 		double max_speed; // maximum speed allowed on the segment
+
+		//traffic light, at segment's end
+		double on_time = 0;
+		double off_time = 1;
+		double phase_offset = 0;
+
+		bool is_red() {
+			if(on_time == 0) return false;
+			return (fmod(cur_time + phase_offset, on_time + off_time) > on_time);
+		}
+
 		bool operator==(const segment& s) const
 		{
 			return s.start == start && s.end == end;// && s.length == length;
 		}
 
-		segment(const Node& s, const Node& e, const double ms, const double len = 0) {
+		segment(const Node& s, const Node& e, const double ms, const double len = 0, const double on_time = 0, const double off_time = 1, const double phase_offset = 0) {
 			start = s.xy();
 			end = e.xy();
 			max_speed = ms;
 			length = len;
 			if(len == 0) length = coord_dist(start, end);
+			this->on_time = on_time;
+			this->off_time = off_time;
+			this->phase_offset = phase_offset;
 		}
 		segment(point _p1, point _p2, const double ms, const double len = 0) {
 			start = coord_from_point(_p1);
@@ -194,6 +219,10 @@ namespace traffic_sim
 			end = s.end;
 			max_speed = s.max_speed;
 			length = s.length;
+			on_time = s.on_time;
+			off_time = s.off_time;
+			phase_offset = s.phase_offset;
+
 		}
 		segment() = default;
 
@@ -252,22 +281,6 @@ namespace traffic_sim
 		return cur_p;
 	}
 
-	struct car {
-		Coordinate position;
-		double cur_speed;
-		double max_speed;
-		segment* cur_segment;
-
-		person* driver;
-
-		car(const Coordinate pos, const double max_sp, segment& seg, person& dr) {
-			position = pos;
-			cur_speed = 0.0;
-			max_speed = max_sp;
-			cur_segment = &seg;
-			driver = &dr;
-		}
-	};
 
 	struct building {
 		enum building_type {
@@ -326,14 +339,13 @@ namespace traffic_sim
 			capacity = max((int)(height * loc.area() * people_density), min_cap);
 		}
 
+		explicit operator point() const noexcept {
+			if(!road_connection) road_connection = closest_point(location);
+			return road_connection;
+		}
+
 	};
 
-
-	struct bus : car {
-		int route_id;
-		vector<Coordinate> stops;
-		vector<person*> passengers;
-	};
 
 	map<int64_t, vector<building>> residential_buildings; // map of residential area id to buildings in that area; initialized in main
 	vector<person> people;
@@ -600,9 +612,7 @@ namespace pathfinding {
 	}
 
 	bool find_path(const building& from, const building& to, vector<segment*>& path) {
-		if(!from.road_connection) from.road_connection = closest_point(from.location);
-		if(!to.road_connection) to.road_connection = closest_point(from.location);
-		return find_path(from.road_connection, to.road_connection, path);
+		return find_path((point)from, (point)to, path);
 	}
 
 	void graph_init(Ways& roads) {
@@ -625,21 +635,27 @@ namespace pathfinding {
 				all_nodes.push_back(from);
 				all_nodes.push_back(to);
 
-
 				segment seg(from, to, speed);
+				if((node_list[i+1].hasTag("highway") && node_list[i+1]["highway"] == "traffic_signals")){// || (node_list[i+1].hasTag("crossing") && node_list[i+1]["crossing"] == "traffic_signals") || (node_list[i+1].hasTag("traffic_signals"))) {
+					seg.on_time = 1;
+				}
+
 				graph[from].push_back(seg); // add the segment to the adjacency list for the starting point
-				output_segment(out_file, seg, 'f');
+				output_segment(out_file, seg, seg.on_time ? 'k' : 'f');
 				seg_count++;
 
-				if (r["oneway"] == "yes" || r["oneway"] == "true" || r["oneway"] == "1") {
+				if (r["oneway"] == "yes" || r["oneway"] == "true" || r["oneway"] == "1" || (r.hasTag("junction") && r["junction"] == "roundabout")) {
 					weak_connections[to].push_back(from);
 					continue; // for one way roads skip
 				}
 
 
 				segment newseg(to, from, speed);
+				if((node_list[i].hasTag("highway") && node_list[i]["highway"] == "traffic_signals")){// || (node_list[i+1].hasTag("crossing") && node_list[i+1]["crossing"] == "traffic_signals") || (node_list[i+1].hasTag("traffic_signals"))) {
+					newseg.on_time = 1;
+				}
 				graph[to].push_back(newseg);
-				output_segment(out_file, newseg, 'r');
+				output_segment(out_file, newseg, newseg.on_time ? 'k' : 'r');
 				seg_count++;
 
 			}
@@ -703,7 +719,7 @@ namespace pathfinding {
 					//if(short_segments.find(s) == short_segments.end()) {
 					short_segments[*short_segment] = l;
 					//cout << "adding hash " << short_segment.h() << endl;
-					output_segment(out_file, *short_segment, (short_segment->start.x > short_segment->end.x) ? 's' : 'k');
+					//output_segment(out_file, *short_segment, (short_segment->start.x > short_segment->end.x) ? 's' : 'k');
 					//}
 				}
 			}
@@ -729,4 +745,85 @@ namespace pathfinding {
 
 		is_init = true;
 	}
+}
+
+namespace traffic_sim {
+	using namespace pathfinding;
+	struct car {
+		Coordinate position;
+		double cur_speed;
+		double max_speed;
+		segment* cur_segment;
+		vector<segment*> path;
+
+		person* driver;
+
+		car(const building* start, const building* target, const double max_sp, person* dr) {
+			if(find_path(*start, *target, path)) {
+				cur_segment = path[0];
+				position = cur_segment->start;
+			}
+			cur_speed = 0.0;
+			max_speed = max_sp;
+			driver = dr;
+		}
+
+	};
+
+	bool is_colliding(Coordinate cor, car* c) {
+		return coord_dist(cor, c->position) < DEFAULT_CAR_RADIUS;
+	}
+
+	bool is_colliding(Coordinate cor, segment* s) {
+		if(s->is_red() && coord_dist(s->end, cor) < DEFAULT_CAR_RADIUS) return true;
+		for(car* c : s->cars) {
+			if(is_colliding(cor, c)) return true;
+		}
+		return false;
+	}
+
+	bool is_colliding(Coordinate cor, vector<segment*> vs) {
+		for(segment* s : vs) {
+			if(is_colliding(cor, s)) return true;
+		}
+		return false;
+	}
+
+	struct bus : car {
+		int route_id;
+		vector<Coordinate> stops;
+		vector<person*> passengers;
+	};
+
+	deque<car> cars; // deque because cars are created dynamically - vector invalidates all references on resize
+
+	struct event {
+		double time;
+		enum type {
+			GO_TO_WORK,
+			GO_HOME,
+			GO_TO_ENTERTAINMENT
+		};
+		type t;
+		person* target;
+		void call() {
+			switch(t) {
+				case GO_TO_WORK: cars.emplace_back(target->home, target->work, 50.0, target); break;
+				case GO_HOME: cars.emplace_back(target->work, target->home, 50.0, target); break;
+				case GO_TO_ENTERTAINMENT: cars.emplace_back(target->home, target->work, 50.0, target); break;
+			}
+
+			cars.back().cur_segment->cars.push_back(&cars.back());
+		}
+		event(double time, type t, person* target) {
+			this->time = time;
+			this->t = t;
+			this->target = target;
+		}
+		bool operator>(const event other) const noexcept{
+			return time > other.time;
+		}
+	};
+
+	priority_queue<event, vector<event>, greater<event>> events;
 }

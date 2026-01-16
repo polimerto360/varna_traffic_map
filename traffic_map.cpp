@@ -35,7 +35,14 @@ int main(int argc, char *argv[])
 
 	string filepath = "/home/polimerto/Desktop/Coding/varna_traffic_map/bulgaria.gol";
 	Features features(filepath.c_str());
-	Feature varna = features("a[admin_level=5][name:en=Varna]").one(); // whole varna
+
+	char city[] = "Varna";
+	if(argc > 1) strcpy(city, argv[1]);
+	string query = city;
+	query = "a[admin_level=5][name:en=" + query + "]";
+
+	cout << "querying " << query << endl;
+	Feature varna = features(query.c_str()).one(); // whole varna
 	Features features_in_varna = features.intersecting(varna);
 	// temp for testing in vuzrazhdane
 	/*
@@ -58,8 +65,8 @@ int main(int argc, char *argv[])
 
 	rng::randomize();
 	cout << "STARTING PATHFINDING\n";
-	int iterations = 0;
-	if(argc > 1) iterations = atoi(argv[1]);
+	int iterations = 1;
+	if(argc > 2) iterations = atoi(argv[2]);
 	// int progress = 0;
 	// for(point start : all_nodes) {
 	// 	if(progress++ < 100000) continue;
@@ -121,11 +128,29 @@ int main(int argc, char *argv[])
 
 	workplaces_init(workplace_features);
 
-	//for(person& p : people) {
+	for(person& p : people) {
+		if(!p.work) continue;
+		events.emplace(
+			time_hms(8, 30+rng::normal_int(-30, 30), rng::random_double(-60, 60)),
+			event::GO_TO_WORK,
+			&p
+		);
+		events.emplace(
+			time_hms(17, 30+rng::normal_int(-30, 30), rng::random_double(-60, 60)),
+			event::GO_HOME,
+			&p
+		);
 		//cout << "age " << p.age << " - home: " <<  (coord_from_point(p.home->location));
 		//if(p.work) cout << "; work: " << (coord_from_point(p.work->location));
 		//cout << "; can drive: " << p.can_drive << endl;
-	//}
+	}
+
+	while(!events.empty()) {
+		event e = events.top();
+		events.pop();
+		cout << "time - " << e.time << "; type - " << e.t << endl;
+		e.call();
+	}
 
 	return 0;
 }

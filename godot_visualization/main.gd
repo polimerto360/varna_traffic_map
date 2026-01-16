@@ -1,7 +1,7 @@
 extends Node2D
 
 var EXE_PATH = "../build/traffic_map"
-var OUT_PATH = "../build/out.txt"
+var OUT_PATH = "out.txt"
 var ITERATIONS = 3;
 
 var f_gr = preload("res://f.tres")
@@ -15,8 +15,8 @@ func _ready() -> void:
 	var output = []
 	OS.execute("pwd", [], output)
 	print("Running in: ", output[0])
-	#OS.execute(EXE_PATH, [str(ITERATIONS)], output)
-	#print(output[1])
+	OS.execute(EXE_PATH, ["Varna", str(ITERATIONS)], output)
+	print(output[1])
 	#var t = Timer.new()
 	#add_child(t)
 	#t.start(5)
