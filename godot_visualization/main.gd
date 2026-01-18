@@ -2,7 +2,8 @@ extends Node2D
 
 var EXE_PATH = "../build/traffic_map"
 var OUT_PATH = "out.txt"
-var ITERATIONS = 3;
+var ITERATIONS = 100
+var RUN_SIM = true
 
 var f_gr = preload("res://f.tres")
 var r_gr = preload("res://r.tres")
@@ -13,10 +14,9 @@ var s_gr = preload("res://s.tres")
 # Called when the node enters the scene tree for the first time.
 func _ready() -> void:
 	var output = []
-	OS.execute("pwd", [], output)
-	print("Running in: ", output[0])
-	OS.execute(EXE_PATH, ["Varna", str(ITERATIONS)], output)
-	print(output[1])
+	if(RUN_SIM):
+		OS.execute(EXE_PATH, ["Varna", str(ITERATIONS)], output)
+		print(output[0])
 	#var t = Timer.new()
 	#add_child(t)
 	#t.start(5)

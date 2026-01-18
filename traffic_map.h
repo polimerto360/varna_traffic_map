@@ -157,22 +157,6 @@ namespace traffic_sim
 	struct car;
 
 
-	struct person {
-		string name;
-		int age;
-		bool can_drive;
-		const building* home;
-
-		building* work = nullptr; // or any place that is visited regularly
-
-		person(string n, int a, bool cd, const building& h) {
-			name = n;
-			age = a;
-			can_drive = cd;
-			home = &h;
-		}
-	};
-
 	struct segment { // directed road segment
 		Coordinate start;
 		Coordinate end;
@@ -226,12 +210,13 @@ namespace traffic_sim
 		}
 		segment() = default;
 
-		// uint64_t h() const { // hash function (segment direction matters) - preserves as much information as possible while still being a 64 bit int
-		// 	return  *(uint64_t *)(&length) ^ ((first_half(start.x) << 48) |
-		// 	(first_half(start.y) << 32) |
-		// 	(first_half(end.x) << 16) |
-		// 	first_half(end.y));
-		string h() const { // hash function (segment direction matters)
+		uint64_t h() const { // hash function (segment direction matters) - preserves as much information as possible while still being a 64 bit int
+			return  *(uint64_t *)(&length) ^ ((first_half(start.x) << 48) |
+			(first_half(start.y) << 32) |
+			(first_half(end.x) << 16) |
+			first_half(end.y));
+		}
+		string h2() const { // hash function (segment direction matters)
 			stringstream ss;
 			ss << hex << (point)start.x << (point)end.x << length;
 			return ss.str();
@@ -348,73 +333,12 @@ namespace traffic_sim
 
 
 	map<int64_t, vector<building>> residential_buildings; // map of residential area id to buildings in that area; initialized in main
-	vector<person> people;
-	vector<building> workplaces;
-
-	void people_init() {
-		(void)(VERBOSE && cout << "GENERATING PEOPLE" << endl);
-		auto t1 = chrono::high_resolution_clock::now();
-
-		for(auto& rb : residential_buildings) {
-			for(const building& b : rb.second) {
-				for(int i = 0; i < b.capacity; i++) {
-					int age = rng::random_int(0, 80);
-					bool can_drive;
-					if(age < 18) can_drive = false;
-					else if(age < 50) can_drive = rng::random_chance(0.8);
-					else can_drive = rng::random_chance(0.5);
-
-					person p("", age, can_drive, b);
-					people.push_back(p);
-				}
-			}
-		}
-
-
-		auto t2 = chrono::high_resolution_clock::now();
-		(void)(VERBOSE && cout << "DONE" << endl);
-		(void)(VERBOSE && cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl);
-
-	}
-	void workplaces_init(Features& workplace_features) {
-		(void)(VERBOSE && cout << "PARSING WORKPLACES" << endl);
-		auto t1 = chrono::high_resolution_clock::now();
-
-		int count = 0;
-		for (const Feature& f : workplace_features)
-		{
-			workplaces.emplace_back(f, (f["building"] == "school") ? building::SCHOOL : building::WORKPLACE);
-			//cout << "Workplace: " << b.name << ", Capacity: " << b.capacity << ", Location: " << coord_from_point(b.location) << endl;
-			count += workplaces.back().capacity;
-		}
-
-		for(building& w : workplaces) {
-			for(int i = 0; i < w.capacity; i++) {
-
-				while(true) {
-					person& p = people[rng::random_int(0, people.size()-1)];
-					if(p.work) continue;
-					if(p.age <= 6) break;
-					if(w.type == building::SCHOOL) {
-						if(p.age <= 18 || rng::random_chance(0.1)) {p.work = &w; break;}
-					} else {
-						if(p.age >= 18 && p.age <= 63) {p.work = &w; break;}
-					}
-
-				}
-
-			}
-		}
-		auto t2 = chrono::high_resolution_clock::now();
-		(void)(VERBOSE && cout << "Total positions: " << count << endl);
-		(void)(VERBOSE && cout << "DONE" << endl);
-		(void)(VERBOSE && cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl);
-	}
 }
 template<>
 struct std::hash<traffic_sim::segment> {
 	size_t operator()(const traffic_sim::segment& s) const {
-		return hash<string>{}(s.h());
+		return s.h();
+		//return hash<string>{}(s.h());
 	}
 };
 
@@ -756,6 +680,8 @@ namespace traffic_sim {
 		segment* cur_segment;
 		vector<segment*> path;
 
+		bool should_reset = false;
+
 		person* driver;
 
 		car(const building* start, const building* target, const double max_sp, person* dr) {
@@ -767,7 +693,9 @@ namespace traffic_sim {
 			max_speed = max_sp;
 			driver = dr;
 		}
-
+		void reset() {
+			should_reset = true;
+		}
 	};
 
 	bool is_colliding(Coordinate cor, car* c) {
@@ -795,25 +723,112 @@ namespace traffic_sim {
 		vector<person*> passengers;
 	};
 
-	deque<car> cars; // deque because cars are created dynamically - vector invalidates all references on resize
+	//deque<car> cars; // cars will be stored in person
+
+	struct person {
+		string name;
+		int age;
+		bool can_drive;
+		const building* home;
+		optional<car> p_car;
+
+		building* work = nullptr; // or any place that is visited regularly
+
+		person(string n, int a, bool cd, const building& h) {
+			name = n;
+			age = a;
+			can_drive = cd;
+			home = &h;
+		}
+		void check_car() {
+			if(p_car && p_car->should_reset) p_car.reset();
+		}
+		void make_car(const building* from, const building* to, double max_speed) {
+			p_car = car(from, to, max_speed, this);
+		}
+	};
+
+	vector<person> people;
+	vector<building> workplaces;
+
+	void people_init() {
+		(void)(VERBOSE && cout << "GENERATING PEOPLE" << endl);
+		auto t1 = chrono::high_resolution_clock::now();
+
+		for(auto& rb : residential_buildings) {
+			for(const building& b : rb.second) {
+				for(int i = 0; i < b.capacity; i++) {
+					int age = rng::random_int(0, 80);
+					bool can_drive;
+					if(age < 18) can_drive = false;
+					else if(age < 50) can_drive = rng::random_chance(0.8);
+					else can_drive = rng::random_chance(0.5);
+
+					person p("", age, can_drive, b);
+					people.push_back(p);
+				}
+			}
+		}
+
+
+		auto t2 = chrono::high_resolution_clock::now();
+		(void)(VERBOSE && cout << "DONE" << endl);
+		(void)(VERBOSE && cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl);
+
+	}
+	void workplaces_init(Features& workplace_features) {
+		(void)(VERBOSE && cout << "PARSING WORKPLACES" << endl);
+		auto t1 = chrono::high_resolution_clock::now();
+
+		int count = 0;
+		for (const Feature& f : workplace_features)
+		{
+			workplaces.emplace_back(f, (f["building"] == "school") ? building::SCHOOL : building::WORKPLACE);
+			//cout << "Workplace: " << b.name << ", Capacity: " << b.capacity << ", Location: " << coord_from_point(b.location) << endl;
+			count += workplaces.back().capacity;
+		}
+
+		for(building& w : workplaces) {
+			for(int i = 0; i < w.capacity; i++) {
+
+				while(true) {
+					person& p = people[rng::random_int(0, people.size()-1)];
+					if(p.work) continue;
+					if(p.age <= 6) break;
+					if(w.type == building::SCHOOL) {
+						if(p.age <= 18 || rng::random_chance(0.1)) {p.work = &w; break;}
+					} else {
+						if(p.age >= 18 && p.age <= 63) {p.work = &w; break;}
+					}
+
+				}
+
+			}
+		}
+		auto t2 = chrono::high_resolution_clock::now();
+		(void)(VERBOSE && cout << "Total positions: " << count << endl);
+		(void)(VERBOSE && cout << "DONE" << endl);
+		(void)(VERBOSE && cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl);
+	}
 
 	struct event {
 		double time;
 		enum type {
 			GO_TO_WORK,
 			GO_HOME,
-			GO_TO_ENTERTAINMENT
+			GO_TO_ENTERTAINMENT,
+			GO_RANDOM
 		};
 		type t;
 		person* target;
 		void call() {
 			switch(t) {
-				case GO_TO_WORK: cars.emplace_back(target->home, target->work, 50.0, target); break;
-				case GO_HOME: cars.emplace_back(target->work, target->home, 50.0, target); break;
-				case GO_TO_ENTERTAINMENT: cars.emplace_back(target->home, target->work, 50.0, target); break;
+				case GO_TO_WORK: target->make_car(target->home, target->work, 50.0); break;
+				case GO_HOME: target->make_car(target->work, target->home, 50.0); break;
+				case GO_TO_ENTERTAINMENT: target->make_car(target->work, target->home, 50.0); break;
 			}
 
-			cars.back().cur_segment->cars.push_back(&cars.back());
+			target->p_car->cur_segment->cars.push_back(&(*(target->p_car)));
 		}
 		event(double time, type t, person* target) {
 			this->time = time;
