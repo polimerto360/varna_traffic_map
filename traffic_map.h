@@ -16,8 +16,6 @@
 #include <random>
 #include <functional>
 
-// TODO: Reference additional headers your program requires here.
-
 namespace config {
 	bool VERBOSE = true;
 
@@ -37,8 +35,10 @@ namespace config {
 	const double ENTERTAINMENT_DENSITY = 0.024; 
 	const int MIN_VISITORS = 5; 
 	
-	const double DEFAULT_ROAD_SPEED = 50.0; // default road speed in km/h
+	const double DEFAULT_ROAD_SPEED = 13.88; // default road speed in m/s
 	const double DEFAULT_CAR_RADIUS = 3.0;
+	const double DEFAULT_CAR_ACCELERATION = 3.5; // m/s^2
+	const double DEFAULT_CAR_BRAKING = 7;
 
 	//const int NUM_CARS = 1000; // total number of cars in the simulation
 }
@@ -84,6 +84,10 @@ namespace traffic_sim
 
 	constexpr double imp_to_m(int imps) {
 		return (unsigned int)imps * 0.006801778856644; // conversion factor centered at 43.2 degrees of latitude
+	}
+
+	constexpr double kmh_to_ms(double kmh) {
+		return kmh / 3.6;
 	}
 
 	double coord_dist(Coordinate a, Coordinate b) {
@@ -186,7 +190,7 @@ namespace traffic_sim
 			max_speed = ms;
 			length = len;
 			if(len == 0) length = coord_dist(start, end);
-			this->on_time = on_time;
+			this->on_time = on_time; // on = green
 			this->off_time = off_time;
 			this->phase_offset = phase_offset;
 		}
@@ -419,7 +423,7 @@ namespace pathfinding {
 		}
 	}
 
-	bool find_path(point from, point to, vector<segment*>& path) {
+	bool find_path(point from, point to, deque<segment*>& path) {
 		// A* with compressed graph; 86 ms for vladislavovo - zelenika
 
 		auto t1 = chrono::high_resolution_clock::now();
@@ -535,7 +539,7 @@ namespace pathfinding {
 		return false;
 	}
 
-	bool find_path(const building& from, const building& to, vector<segment*>& path) {
+	bool find_path(const building& from, const building& to, deque<segment*>& path) {
 		return find_path((point)from, (point)to, path);
 	}
 
@@ -547,7 +551,7 @@ namespace pathfinding {
 
 
 		for (const Way& r : roads) {
-			double speed = (r.hasTag("maxspeed") ? stod(r["maxspeed"]) : DEFAULT_ROAD_SPEED);
+			double speed = (r.hasTag("maxspeed") ? kmh_to_ms(stod(r["maxspeed"])) : DEFAULT_ROAD_SPEED);
 
 			vector<Node> node_list; // nodes, composing the current Way
 			r.nodes().addTo(node_list); // converting from Nodes to a vector is neccessary for random access
@@ -627,7 +631,7 @@ namespace pathfinding {
 
 				for(segment* ss : long_segment) {
 					total_dist += ss->length;
-					total_time += ss->max_speed;
+					total_time += ss->length / ss->max_speed;
 				}
 				double total_speed = total_dist / total_time;
 
@@ -673,18 +677,26 @@ namespace pathfinding {
 
 namespace traffic_sim {
 	using namespace pathfinding;
+
+	double closest_obst(car* c, double vision);
+
 	struct car {
 		Coordinate position;
 		double cur_speed;
 		double max_speed;
+		double accel;
+		double brake;
+		double min_braking_dist;
 		segment* cur_segment;
-		vector<segment*> path;
+		double segment_position = 0.0;
+		deque<segment*> path;
 
 		bool should_reset = false;
 
 		person* driver;
 
-		car(const building* start, const building* target, const double max_sp, person* dr) {
+
+		car(const building* start, const building* target, person* dr, const double max_sp = DEFAULT_ROAD_SPEED, double acc = DEFAULT_CAR_ACCELERATION, double br = DEFAULT_CAR_BRAKING) {
 			if(find_path(*start, *target, path)) {
 				cur_segment = path[0];
 				position = cur_segment->start;
@@ -692,11 +704,139 @@ namespace traffic_sim {
 			cur_speed = 0.0;
 			max_speed = max_sp;
 			driver = dr;
+			accel = acc;
+			brake = br;
+			min_braking_dist = max_speed * (max_speed / brake) / 2;
+
 		}
+		//explicit bool operator==(const car &other) const noexcept {
+		//	return cur_segm
+		//}
 		void reset() {
 			should_reset = true;
 		}
+		double max_dist(double dt) { // calculate maximum distance reachable in dt (delta time)
+			double base_dist = cur_speed * dt;
+			double max_point = (max_speed - cur_speed) / accel;
+			/*
+			 * 13.8  ---------------------
+			 *      /|                   |
+			 *     / |        2          |
+			 *    / 1|                   |
+			 *   |---|-------------------| <
+			 *   |   |                   | < base_dist
+			 *   |   |                   | <
+			 * 0 -------------------------
+			         ^
+			       max_point
+
+			 */
+			//                 (                       1                      )   (                 2                )
+			return base_dist + min(max_point, dt) * max_speed / max_point / 2.0 + max(dt - max_point, 0.0) * max_speed;
+		}
+		double min_dist(double dt) { // calculate minimum distance reachable in dt (delta time)
+			double min_point = min(cur_speed / brake, dt);
+			double dv = min_point * brake;
+			double top = (dv) * min_point / 2;
+
+			/*
+			 * cur_speed
+			 *   ↓
+			 *   |\
+			 *   | \ (top)
+			 *   |  \
+			 *   |---|  < cur_speed - dv
+			 *   |   |
+			 *   | 1 |
+			 *   |   |
+			 * 0 -----
+			         ^
+				   min_point
+			 */
+			//           (             1             )
+			return top + (cur_speed - dv) * min_point;
+		}
+
+		void move_dist(double dist) {
+			segment_position += dist;
+			if(segment_position >= cur_segment->length) {
+				segment_position -= cur_segment->length;
+				for (vector<car*>::iterator it = cur_segment->cars.begin(); it != cur_segment->cars.end();)
+				{
+					if (*it == this) {
+						cur_segment->cars.erase(it);
+						break;
+					}
+				}
+				path.pop_front();
+				if(path.empty()) {
+					reset();
+					return;
+				}
+				cur_segment = path.front();
+			}
+		}
+
+		// TODO: fix, test and add visualization
+		void move(double dt) {
+			double vision = max_dist(dt) + min_braking_dist;
+			double obst = closest_obst(this, vision);
+			double min_d = min_dist(dt);
+			double max_d = max_dist(dt);
+
+			if(obst < 0) move_dist(max_d); // no obstacles ahead, go full power
+
+			double target = vision - obst;
+			if(target < min_d) move_dist(min_d); // stop
+			else move_dist(target); // approach
+		}
 	};
+
+
+	// returns the number of segments that can be reached by moving dist
+	int segments_ahead(car* c, double dist, const deque<segment*>& segments) {
+		int r = 0;
+		segment* cur_seg = segments[r];
+		dist -= (cur_seg->length - c->segment_position);
+		while(dist > 0 && r < segments.size()-1) {
+			cur_seg = segments[++r];
+			dist -= cur_seg->length;
+		}
+		return r;
+	}
+
+	double closest_obst(car* c, double vision) {
+		double min_dist = 1e20;
+		for(car* other : c->cur_segment->cars) {
+			if(other->segment_position - c->segment_position > 0.0) min_dist = min(min_dist, other->segment_position - c->segment_position);
+		}
+		if(c->cur_segment->is_red()) min_dist = min(min_dist, c->cur_segment->length - c->segment_position);
+
+		// min_dist == 1e20 if no obstacles were found
+		if(min_dist < 1e20) return min_dist;
+
+		// cur dist is the distance covered so far
+		double cur_dist = c->cur_segment->length - c->segment_position;
+
+		// segments_ahead returns how many segments are covered by vision
+		int seg_count = segments_ahead(c, vision, c->path);
+		for(int i = 1; i <= seg_count; i++) { // skip current segment
+			// check cars
+			for(car* other : c->path[i]->cars) {
+				min_dist = min(min_dist, cur_dist + other->segment_position);
+			}
+			// check red light
+			if(c->path[i]->is_red()) min_dist = min(min_dist, c->path[i]->length + cur_dist);
+
+			// min_dist == 1e20 if no obstacles were found
+			if(min_dist < 1e20) return min_dist;
+
+			// add current segment's length to cur_dist
+			cur_dist += c->path[i]->length;
+		}
+
+		return -1.0;
+	}
 
 	bool is_colliding(Coordinate cor, car* c) {
 		return coord_dist(cor, c->position) < DEFAULT_CAR_RADIUS;
@@ -740,11 +880,15 @@ namespace traffic_sim {
 			can_drive = cd;
 			home = &h;
 		}
-		void check_car() {
-			if(p_car && p_car->should_reset) p_car.reset();
+		bool check_car() { // returns whether the car exists
+			if(p_car && p_car->should_reset) {
+				p_car.reset();
+				return false;
+			}
+			return true;
 		}
-		void make_car(const building* from, const building* to, double max_speed) {
-			p_car = car(from, to, max_speed, this);
+		void make_car(const building* from, const building* to, double max_speed = DEFAULT_ROAD_SPEED) {
+			p_car = car(from, to, this, max_speed);
 		}
 	};
 
@@ -823,12 +967,13 @@ namespace traffic_sim {
 		person* target;
 		void call() {
 			switch(t) {
-				case GO_TO_WORK: target->make_car(target->home, target->work, 50.0); break;
-				case GO_HOME: target->make_car(target->work, target->home, 50.0); break;
-				case GO_TO_ENTERTAINMENT: target->make_car(target->work, target->home, 50.0); break;
+				case GO_TO_WORK: target->make_car(target->home, target->work); break;
+				case GO_HOME: target->make_car(target->work, target->home); break;
+				case GO_TO_ENTERTAINMENT: target->make_car(target->work, target->home); break;
+				case GO_RANDOM: target->make_car(target->home, &workplaces[rng::random_int(0, workplaces.size()-1)]); break;
 			}
 
-			target->p_car->cur_segment->cars.push_back(&(*(target->p_car)));
+			target->p_car->cur_segment->cars.push_back(&(target->p_car.value()));
 		}
 		event(double time, type t, person* target) {
 			this->time = time;
@@ -841,4 +986,13 @@ namespace traffic_sim {
 	};
 
 	priority_queue<event, vector<event>, greater<event>> events;
+
+	void sim_tick(double dt) {
+		cur_time += dt;
+		for(person &p : people) {
+			if (p.p_car && p.check_car()) {
+				p.p_car->move(dt);
+			}
+		}
+	}
 }

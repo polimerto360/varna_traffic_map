@@ -129,7 +129,10 @@ int main(int argc, char *argv[])
 	workplaces_init(workplace_features);
 
 	for(person& p : people) {
-		if(!p.work) continue;
+		if(!p.work) {
+			// TODO: random events for the unemployed
+			continue;
+		}
 		events.emplace(
 			time_hms(8, 30+rng::normal_int(-30, 30), rng::random_double(-60, 60)),
 			event::GO_TO_WORK,
@@ -145,12 +148,16 @@ int main(int argc, char *argv[])
 		//cout << "; can drive: " << p.can_drive << endl;
 	}
 
-	while(!events.empty()) {
-		event e = events.top();
-		events.pop();
-		cout << "time - " << e.time << "; type - " << e.t << endl;
-		e.call();
+	for(double tick = 0.0; tick < 86400; tick++) {
+		sim_tick(1.0);
 	}
+
+	// while(!events.empty()) {
+	// 	event e = events.top();
+	// 	events.pop();
+	// 	cout << "time - " << e.time << "; type - " << e.t << endl;
+	// 	e.call();
+	// }
 
 	return 0;
 }
