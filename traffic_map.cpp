@@ -45,14 +45,14 @@ int main(int argc, char *argv[])
 	Feature varna = features(query.c_str()).one(); // whole varna
 	Features features_in_varna = features.intersecting(varna);
 	// temp for testing in vuzrazhdane
-	/*
+
 	const Feature* vuzrazhdane;
 
 	for (const Feature& f : features_in_varna) {
 		if (f.id() == 44006186) { vuzrazhdane = &f; break; }
 	}
 	features_in_varna = features_in_varna.intersecting(*vuzrazhdane);
-	*/
+
 	Ways roads = features_in_varna.ways("[highway=motorway,trunk,primary,secondary,tertiary,residential,road,track,motorway_link,trunk_link,primary_link,secondary_link,tertiary_link,unclassified,service]");
 	Relations bus_routes = features_in_varna.relations("r[route=bus][type=route]");
 	Ways residential_areas = features_in_varna.ways("a[landuse=residential]");
@@ -64,39 +64,39 @@ int main(int argc, char *argv[])
 	graph_init(roads);
 
 	rng::randomize();
-	cout << "STARTING PATHFINDING\n";
-	int iterations = 1;
-	if(argc > 2) iterations = atoi(argv[2]);
-	// int progress = 0;
-	// for(point start : all_nodes) {
-	// 	if(progress++ < 100000) continue;
-	// 	cout << "progress: " << progress << " / " << all_nodes.size() << endl;
+	// cout << "STARTING PATHFINDING\n";
+	// int iterations = 1;
+	// if(argc > 2) iterations = atoi(argv[2]);
+	// // int progress = 0;
+	// // for(point start : all_nodes) {
+	// // 	if(progress++ < 100000) continue;
+	// // 	cout << "progress: " << progress << " / " << all_nodes.size() << endl;
+	// // 	cout << "Start node: " << coord_from_point(start) << endl;
+	// // 	point end = all_nodes[rng::random_int(0, all_nodes.size() - 1)];
+	// // 	cout << "End node: " << coord_from_point(end) << endl;
+	// // 	vector<segment*> path;
+	// // 	cout << (find_path(start, end, path) ? "SUCCESS\n" : "FAILED\n");
+	// // 	progress++;
+ // //
+	// // }
+	// for(int i = 0; i < iterations; i++) {
+ //
+	// 	point start = all_nodes[rng::random_int(0, all_nodes.size() - 1)];
 	// 	cout << "Start node: " << coord_from_point(start) << endl;
 	// 	point end = all_nodes[rng::random_int(0, all_nodes.size() - 1)];
 	// 	cout << "End node: " << coord_from_point(end) << endl;
-	// 	vector<segment*> path;
-	// 	cout << (find_path(start, end, path) ? "SUCCESS\n" : "FAILED\n");
-	// 	progress++;
  //
+	// 	deque<segment*> path;
+ //
+	// 	cout << (find_path(start, end, path) ? "SUCCESS\n" : "FAILED\n");
+ //
+	// 	//cout << "Path segments: " << endl;
+	// 	for (segment* seg : path) {
+	// 		//cout << seg.start << " -> " << seg.end << " (length: " << seg.length << " meters)" << endl;
+	// 		output_segment(out_file, *seg, 'c');
+	// 	}
 	// }
-	for(int i = 0; i < iterations; i++) {
-
-		point start = all_nodes[rng::random_int(0, all_nodes.size() - 1)];
-		cout << "Start node: " << coord_from_point(start) << endl;
-		point end = all_nodes[rng::random_int(0, all_nodes.size() - 1)];
-		cout << "End node: " << coord_from_point(end) << endl;
-
-		vector<segment*> path;
-
-		cout << (find_path(start, end, path) ? "SUCCESS\n" : "FAILED\n");
-
-		//cout << "Path segments: " << endl;
-		for (segment* seg : path) {
-			//cout << seg.start << " -> " << seg.end << " (length: " << seg.length << " meters)" << endl;
-			output_segment(out_file, *seg, 'c');
-		}
-	}
-	out_file.close();
+	// out_file.close();
 
 	// residential buildings
 	(void)(VERBOSE && cout << "PARSING RESIDENTIAL BUILDINGS" << endl);
@@ -128,28 +128,10 @@ int main(int argc, char *argv[])
 
 	workplaces_init(workplace_features);
 
-	for(person& p : people) {
-		if(!p.work) {
-			// TODO: random events for the unemployed
-			continue;
-		}
-		events.emplace(
-			time_hms(8, 30+rng::normal_int(-30, 30), rng::random_double(-60, 60)),
-			event::GO_TO_WORK,
-			&p
-		);
-		events.emplace(
-			time_hms(17, 30+rng::normal_int(-30, 30), rng::random_double(-60, 60)),
-			event::GO_HOME,
-			&p
-		);
-		//cout << "age " << p.age << " - home: " <<  (coord_from_point(p.home->location));
-		//if(p.work) cout << "; work: " << (coord_from_point(p.work->location));
-		//cout << "; can drive: " << p.can_drive << endl;
-	}
+	events_init();
 
-	for(double tick = 0.0; tick < 86400; tick++) {
-		sim_tick(1.0);
+	for(double tick = 0.0; tick < SIM_LENGTH; tick += TIME_STEP) {
+		sim_tick(TIME_STEP);
 	}
 
 	// while(!events.empty()) {
@@ -159,5 +141,6 @@ int main(int argc, char *argv[])
 	// 	e.call();
 	// }
 
+	out_file.close();
 	return 0;
 }

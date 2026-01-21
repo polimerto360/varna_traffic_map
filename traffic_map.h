@@ -22,7 +22,8 @@ namespace config {
 	std::ofstream out_file("out.txt", std::ofstream::trunc | std::ofstream::out);
 
 
-	const double TIME_STEP = 1.0; // time step in seconds
+	const double TIME_STEP = 0.1; // time step in seconds
+	const double SIM_LENGTH = 100.0; // how long to run the simulation
 	const double DEFAULT_BUILDING_HEIGHT = 5.0; // default building height in meters
 	// target workplaces is 150000
 	const double EMPLOYEE_DENSITY = 0.038; // people per cubic meter (adding 0.01 increases result by 56309)
@@ -193,6 +194,8 @@ namespace traffic_sim
 			this->on_time = on_time; // on = green
 			this->off_time = off_time;
 			this->phase_offset = phase_offset;
+
+			cars = vector<car*>(0);
 		}
 		segment(point _p1, point _p2, const double ms, const double len = 0) {
 			start = coord_from_point(_p1);
@@ -200,6 +203,8 @@ namespace traffic_sim
 			max_speed = ms;
 			length = len;
 			if(len == 0) length = coord_dist(start, end);
+
+			cars = vector<car*>(0);
 		}
 		segment(const segment &s)
 		{
@@ -211,6 +216,7 @@ namespace traffic_sim
 			off_time = s.off_time;
 			phase_offset = s.phase_offset;
 
+			cars = vector<car*>(0);
 		}
 		segment() = default;
 
@@ -234,7 +240,8 @@ namespace traffic_sim
 
 	static ostream& operator<<(ostream& out, const Coordinate& coord)
 	{
-		out << "(" << Mercator::latFromY(coord.y) << ", " << Mercator::lonFromX(coord.x) << ")";
+		out << coord.x << " " << coord.y;
+		//out << Mercator::latFromY(coord.y) << " " << Mercator::lonFromX(coord.x);
 		return out;
 	}
 
@@ -245,7 +252,7 @@ namespace traffic_sim
 	}
 
 	void output_segment(ostream& out, const segment& seg, char type) {
-		out << seg.start.x << " " << seg.start.y << " " << seg.end.x << " " << seg.end.y << " " << type << endl;
+		out << "seg " << seg.start.x << " " << seg.start.y << " " << seg.end.x << " " << seg.end.y << " " << type << endl;
 		return;
 	}
 
@@ -423,7 +430,7 @@ namespace pathfinding {
 		}
 	}
 
-	bool find_path(point from, point to, deque<segment*>& path) {
+	bool find_path(point from, point to, vector<segment*>& path) {
 		// A* with compressed graph; 86 ms for vladislavovo - zelenika
 
 		auto t1 = chrono::high_resolution_clock::now();
@@ -500,7 +507,7 @@ namespace pathfinding {
 
 
 				while(came_from.contains(cur_point)) {
-					segment cur_seg = *came_from[cur_point];
+					segment& cur_seg = *came_from[cur_point];
 					if(long_segments.contains(cur_seg)) {
 						for(segment* short_seg : long_segments[cur_seg]) {
 							path.push_back(short_seg);
@@ -539,7 +546,7 @@ namespace pathfinding {
 		return false;
 	}
 
-	bool find_path(const building& from, const building& to, deque<segment*>& path) {
+	bool find_path(const building& from, const building& to, vector<segment*>& path) {
 		return find_path((point)from, (point)to, path);
 	}
 
@@ -689,7 +696,7 @@ namespace traffic_sim {
 		double min_braking_dist;
 		segment* cur_segment;
 		double segment_position = 0.0;
-		deque<segment*> path;
+		vector<segment*> path;
 
 		bool should_reset = false;
 
@@ -697,10 +704,13 @@ namespace traffic_sim {
 
 
 		car(const building* start, const building* target, person* dr, const double max_sp = DEFAULT_ROAD_SPEED, double acc = DEFAULT_CAR_ACCELERATION, double br = DEFAULT_CAR_BRAKING) {
-			if(find_path(*start, *target, path)) {
-				cur_segment = path[0];
+			if(find_path(*start, *target, path) && !path.empty()) {
+				cur_segment = path.front();
 				position = cur_segment->start;
+			} else {
+				should_reset = true;
 			}
+
 			cur_speed = 0.0;
 			max_speed = max_sp;
 			driver = dr;
@@ -709,6 +719,14 @@ namespace traffic_sim {
 			min_braking_dist = max_speed * (max_speed / brake) / 2;
 
 		}
+
+		Coordinate update_position() {
+			double ratio = segment_position / cur_segment->length;
+
+			position = Coordinate(lerp(cur_segment->start.x, cur_segment->end.x, ratio), lerp(cur_segment->start.y, cur_segment->end.y, ratio));
+			return position;
+		}
+
 		//explicit bool operator==(const car &other) const noexcept {
 		//	return cur_segm
 		//}
@@ -759,16 +777,16 @@ namespace traffic_sim {
 
 		void move_dist(double dist) {
 			segment_position += dist;
-			if(segment_position >= cur_segment->length) {
+			while(segment_position >= cur_segment->length) {
 				segment_position -= cur_segment->length;
-				for (vector<car*>::iterator it = cur_segment->cars.begin(); it != cur_segment->cars.end();)
+				for (vector<car*>::iterator it = cur_segment->cars.begin(); it != cur_segment->cars.end(); it++)
 				{
 					if (*it == this) {
 						cur_segment->cars.erase(it);
 						break;
 					}
 				}
-				path.pop_front();
+				path.erase(path.begin());
 				if(path.empty()) {
 					reset();
 					return;
@@ -777,24 +795,30 @@ namespace traffic_sim {
 			}
 		}
 
-		// TODO: fix, test and add visualization
+		// TODO: fix movement calculation, implement proper visualization, document, then finish up
 		void move(double dt) {
 			double vision = max_dist(dt) + min_braking_dist;
 			double obst = closest_obst(this, vision);
 			double min_d = min_dist(dt);
 			double max_d = max_dist(dt);
 
-			if(obst < 0) move_dist(max_d); // no obstacles ahead, go full power
+			if(obst < 0) {
+				move_dist(max_d); // no obstacles ahead, go full power
+				cur_speed = min(min(cur_speed + dt * accel, max_speed), cur_segment->max_speed);
+			}
 
 			double target = vision - obst;
-			if(target < min_d) move_dist(min_d); // stop
+			if(target < min_d) {
+				move_dist(min_d); // stop
+				cur_speed = max(cur_speed - dt * brake, 0.0);
+			}
 			else move_dist(target); // approach
 		}
 	};
 
 
 	// returns the number of segments that can be reached by moving dist
-	int segments_ahead(car* c, double dist, const deque<segment*>& segments) {
+	int segments_ahead(car* c, double dist, const vector<segment*>& segments) {
 		int r = 0;
 		segment* cur_seg = segments[r];
 		dist -= (cur_seg->length - c->segment_position);
@@ -838,6 +862,7 @@ namespace traffic_sim {
 		return -1.0;
 	}
 
+	/*
 	bool is_colliding(Coordinate cor, car* c) {
 		return coord_dist(cor, c->position) < DEFAULT_CAR_RADIUS;
 	}
@@ -855,6 +880,12 @@ namespace traffic_sim {
 			if(is_colliding(cor, s)) return true;
 		}
 		return false;
+	}*/
+
+	static ostream& operator<<(ostream& out, const car& c)
+	{
+		out << "car " << c.position;
+		return out;
 	}
 
 	struct bus : car {
@@ -965,7 +996,7 @@ namespace traffic_sim {
 		};
 		type t;
 		person* target;
-		void call() {
+		void call() const {
 			switch(t) {
 				case GO_TO_WORK: target->make_car(target->home, target->work); break;
 				case GO_HOME: target->make_car(target->work, target->home); break;
@@ -973,7 +1004,7 @@ namespace traffic_sim {
 				case GO_RANDOM: target->make_car(target->home, &workplaces[rng::random_int(0, workplaces.size()-1)]); break;
 			}
 
-			target->p_car->cur_segment->cars.push_back(&(target->p_car.value()));
+			if(target->check_car()) target->p_car->cur_segment->cars.push_back(&(target->p_car.value()));
 		}
 		event(double time, type t, person* target) {
 			this->time = time;
@@ -987,12 +1018,52 @@ namespace traffic_sim {
 
 	priority_queue<event, vector<event>, greater<event>> events;
 
+	void events_init() {
+		(void)(VERBOSE && cout << "CREATING EVENTS" << endl);
+		auto t1 = chrono::high_resolution_clock::now();
+		for(person& p : people) {
+			if(!p.work) {
+				// TODO: random events for the unemployed
+				continue;
+			}
+			events.emplace(
+				//time_hms(8, 30+rng::normal_int(-30, 30), rng::random_double(-60, 60)),
+				time_hms(0, 1, rng::random_double(-60, 60)),
+						event::GO_TO_WORK,
+					&p
+			);
+			events.emplace(
+				time_hms(17, 30+rng::normal_int(-30, 30), rng::random_double(-60, 60)),
+						//time_hms(17, 30+rng::normal_int(-30, 30), rng::random_double(-60, 60)),
+						event::GO_HOME,
+					&p
+			);
+			//cout << "age " << p.age << " - home: " <<  (coord_from_point(p.home->location));
+			//if(p.work) cout << "; work: " << (coord_from_point(p.work->location));
+			//cout << "; can drive: " << p.can_drive << endl;
+		}
+		auto t2 = chrono::high_resolution_clock::now();
+		(void)(VERBOSE && cout << "Total events: " << events.size() << endl);
+		(void)(VERBOSE && cout << "DONE" << endl);
+		(void)(VERBOSE && cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl);
+	}
 	void sim_tick(double dt) {
 		cur_time += dt;
+		cout << "PROGRESS: " << cur_time << " / " << SIM_LENGTH << endl;
+		out_file << "t " << cur_time << endl;
+		while(!events.empty() && events.top().time <= cur_time) {
+			events.top().call();
+			events.pop();
+		}
+
 		for(person &p : people) {
 			if (p.p_car && p.check_car()) {
 				p.p_car->move(dt);
+				p.p_car->update_position();
+				out_file << p.p_car.value() << endl;
 			}
+
+
 		}
 	}
 }
