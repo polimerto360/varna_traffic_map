@@ -14,6 +14,7 @@ var s_gr = preload("res://s.tres")
 var time: float = 0.0
 var step = 0.1
 var cars = {}
+var timer: Timer
 # Called when the node enters the scene tree for the first time.
 func _ready() -> void:
 	var output: Array = []
@@ -59,7 +60,16 @@ func _ready() -> void:
 	print("segments: ", lines)
 	cars[time] = curr_cars
 	time = 0.0
-		
+	timer = Timer.new()
+	add_child(timer)
+	timer.timeout.connect(time_out)
+	timer.one_shot = false
+	timer.start(step);
+
+func time_out():
+	time += step
+	print("time = ", time)
+	queue_redraw()
 func _draw():
 	
 	#draw_circle(Vector2(0, 0), 1, Color.CORAL, true)
@@ -105,13 +115,14 @@ func _input(event: InputEvent) -> void:
 			for line in get_children():
 				if(line is Line2D and line.gradient == s_gr): line.visible = !line.visible
 		if Input.is_key_pressed(KEY_LEFT):
-			time -= 0.1
-			print("time: ", time)
-			queue_redraw()
+			step = -abs(step)
 		if Input.is_key_pressed(KEY_RIGHT):
-			time += 0.1
-			print("time: ", time)
-			queue_redraw()
+			step = abs(step)
+		if Input.is_key_pressed(KEY_SPACE):
+			if timer.is_stopped():
+				timer.start(abs(step))
+			else:
+				timer.stop()
 			
 	if event is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		$Camera2D.position -= event.screen_relative / $Camera2D.zoom

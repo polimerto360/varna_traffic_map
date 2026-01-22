@@ -45,13 +45,15 @@ int main(int argc, char *argv[])
 	Feature varna = features(query.c_str()).one(); // whole varna
 	Features features_in_varna = features.intersecting(varna);
 	// temp for testing in vuzrazhdane
-
+	/*
 	const Feature* vuzrazhdane;
 
 	for (const Feature& f : features_in_varna) {
 		if (f.id() == 44006186) { vuzrazhdane = &f; break; }
 	}
 	features_in_varna = features_in_varna.intersecting(*vuzrazhdane);
+	*/
+	//
 
 	Ways roads = features_in_varna.ways("[highway=motorway,trunk,primary,secondary,tertiary,residential,road,track,motorway_link,trunk_link,primary_link,secondary_link,tertiary_link,unclassified,service]");
 	Relations bus_routes = features_in_varna.relations("r[route=bus][type=route]");
