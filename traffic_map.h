@@ -41,6 +41,8 @@ namespace config {
 	const double DEFAULT_CAR_ACCELERATION = 3.5; // m/s^2
 	const double DEFAULT_CAR_BRAKING = 7;
 
+	const double DEFAULT_TRAFFIC_LIGHT_ON_TIME = 15.0; // on means green, off means red
+	const double DEFAULT_TRAFFIC_LIGHT_OFF_TIME = 45.0;
 	const int MAX_CARS = 1000; // total number of cars in the simulation
 	const double EPSILON = 0.000000001;
 }
@@ -186,7 +188,7 @@ namespace traffic_sim
 			return s.start == start && s.end == end;// && s.length == length;
 		}
 
-		segment(const Node& s, const Node& e, const double ms, const double len = 0, const double on_time = 0, const double off_time = 1, const double phase_offset = 0) {
+		segment(const Node& s, const Node& e, const double ms, const double len = 0, const double on_time = 0, const double off_time = DEFAULT_TRAFFIC_LIGHT_OFF_TIME, const double phase_offset = 0) {
 			start = s.xy();
 			end = e.xy();
 			max_speed = ms;
@@ -574,7 +576,7 @@ namespace pathfinding {
 
 				segment seg(from, to, speed);
 				if((node_list[i+1].hasTag("highway") && node_list[i+1]["highway"] == "traffic_signals")){// || (node_list[i+1].hasTag("crossing") && node_list[i+1]["crossing"] == "traffic_signals") || (node_list[i+1].hasTag("traffic_signals"))) {
-					seg.on_time = 1;
+					seg.on_time = DEFAULT_TRAFFIC_LIGHT_ON_TIME;
 				}
 
 				graph[from].push_back(seg); // add the segment to the adjacency list for the starting point
@@ -806,24 +808,25 @@ namespace traffic_sim {
 					return;
 				}
 				cur_segment = path.front();
+				cur_segment->cars.push_back(this);
 			}
 		}
 
 		// TODO: fix movement calculation, implement proper visualization, document, then finish up
-		void move(double dt) {
+		void move(double dt) { // dt - delta time
 			double vision = max_dist(dt) + min_braking_dist;
 			double obst = closest_obst(this, vision);
 			double min_d = min_dist(dt);
 			double max_d = max_dist(dt);
 
-			if(obst < 0) {
+			if(obst < 0.0) {
 				move_dist(max_d); // no obstacles ahead, go full power
 				set_speed(min(min(cur_speed + dt * accel, max_speed), cur_segment->max_speed));
 				return;
 			} else {
-				// slow down on a stable collision course
+				// slow down on a stable "collision course"
 				double deaccel = cur_speed * cur_speed / (2.0 * obst);
-				move_dist(max(min_d, (deaccel * dt) * dt / 2.0 + dt * (cur_speed - deaccel * dt)), dt); // approach
+				move_dist(max(min_d, (deaccel * dt) * dt / 2.0 + dt * (cur_speed - deaccel * dt)), dt);
 				//cout << "approaching" << endl;
 
 			}
@@ -845,7 +848,7 @@ namespace traffic_sim {
 
 	double closest_obst(car* c, double vision) {
 		double min_dist = 1e20;
-		for(car* other : c->cur_segment->cars) {
+		for(car* other : c->cur_segment->cars) { // special case for current segment - check if the cars are in front
 			if(other->segment_position - c->segment_position > 0.0) min_dist = min(min_dist, other->segment_position - c->segment_position);
 		}
 		if(c->cur_segment->is_red()) min_dist = min(min_dist, c->cur_segment->length - c->segment_position);
