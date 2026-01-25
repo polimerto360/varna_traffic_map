@@ -23,7 +23,7 @@ namespace config {
 
 
 	const double TIME_STEP = 0.1; // time step in seconds
-	const double SIM_LENGTH = 500.0; // how long to run the simulation
+	const double SIM_LENGTH = 100.0; // how long to run the simulation
 	const double DEFAULT_BUILDING_HEIGHT = 5.0; // default building height in meters
 	// target workplaces is 150000
 	const double EMPLOYEE_DENSITY = 0.038; // people per cubic meter (adding 0.01 increases result by 56309)
@@ -45,6 +45,8 @@ namespace config {
 	const double DEFAULT_TRAFFIC_LIGHT_OFF_TIME = 45.0;
 	const int MAX_CARS = 1000; // total number of cars in the simulation
 	const double EPSILON = 0.000000001;
+	const double MIN_SPEED = -1.0;
+	const double DIST_COMPENSATION = 1.0;
 }
 
 namespace traffic_sim
@@ -180,6 +182,7 @@ namespace traffic_sim
 
 		bool is_red() {
 			if(on_time == 0) return false;
+			return true;
 			return (fmod(cur_time + phase_offset, on_time + off_time) > on_time);
 		}
 
@@ -591,7 +594,7 @@ namespace pathfinding {
 
 				segment newseg(to, from, speed);
 				if((node_list[i].hasTag("highway") && node_list[i]["highway"] == "traffic_signals")){// || (node_list[i+1].hasTag("crossing") && node_list[i+1]["crossing"] == "traffic_signals") || (node_list[i+1].hasTag("traffic_signals"))) {
-					newseg.on_time = 1;
+					newseg.on_time = DEFAULT_TRAFFIC_LIGHT_ON_TIME;
 				}
 				graph[to].push_back(newseg);
 				output_segment(out_file, newseg, newseg.on_time ? 'k' : 'r');
@@ -693,11 +696,11 @@ namespace traffic_sim {
 
 	struct car {
 		Coordinate position;
+		point target_loc;
 		double cur_speed;
 		double max_speed;
 		double accel;
 		double brake;
-		double min_braking_dist;
 		segment* cur_segment;
 		double segment_position = 0.0;
 		vector<segment*> path;
@@ -710,6 +713,7 @@ namespace traffic_sim {
 		car(const building* start, const building* target, person* dr, const double max_sp = DEFAULT_ROAD_SPEED, double acc = DEFAULT_CAR_ACCELERATION, double br = DEFAULT_CAR_BRAKING) {
 			if(find_path(*start, *target, path) && !path.empty()) {
 				cur_segment = path.front();
+				target_loc = (point)target->road_connection;
 				position = cur_segment->start;
 				for(const segment* s : path) output_segment(out_file, *s, 'c');
 			} else {
@@ -721,7 +725,6 @@ namespace traffic_sim {
 			driver = dr;
 			accel = acc;
 			brake = br;
-			min_braking_dist = max_speed * (max_speed / brake) / 2.0;
 
 		}
 
@@ -782,16 +785,26 @@ namespace traffic_sim {
 			return top + (cur_speed - dv) * min_point;
 		}
 
-		void set_speed(double s) { // sets and clamps speed
-			cur_speed = min(min(max(s, 0.0), max_speed), cur_segment->max_speed);
+		void set_speed(double s, bool slowing_down = true) { // sets and clamps speed
+			if(slowing_down && s < MIN_SPEED) s = 0,0;
+			else cur_speed = min(min(max(s, 0.0), max_speed), cur_segment->max_speed);
+		}
+		double get_max_speed() {
+			return min(max_speed, cur_segment->max_speed);
+		}
+
+		constexpr double area(double v1, double accel, double len) {
+			double v2 = v1 + accel * len;
+			return min(v1, v2) * len + len * abs(v2-v1) / 2.0;
 		}
 
 		void move_dist(double dist, double dt = -1.0) {
-			segment_position += dist;
+			//if(dist < MIN_DIST) dist = 0.0;
 			if(dt > 0.0) { // dt being positive signals recalculaion of cur_speed
 				double mid = dist/dt;
-				set_speed(cur_speed + (mid-cur_speed) * 2.0); // linear extrapolation
+				set_speed(cur_speed + (mid-cur_speed) * 2.0, mid < cur_speed); // linear extrapolation
 			}
+			if(cur_speed > EPSILON) segment_position += dist;
 			while(segment_position >= cur_segment->length) {
 				segment_position -= cur_segment->length;
 				for (vector<car*>::iterator it = cur_segment->cars.begin(); it != cur_segment->cars.end(); it++)
@@ -803,7 +816,7 @@ namespace traffic_sim {
 				}
 				path.erase(path.begin());
 				//(void)(VERBOSE && cout << "segments left: " << path.size() << endl);
-				if(path.empty()) {
+				if(path.empty() || (point)path.front()->start == target_loc) {
 					reset();
 					return;
 				}
@@ -811,9 +824,23 @@ namespace traffic_sim {
 				cur_segment->cars.push_back(this);
 			}
 		}
+		constexpr double calc_k(double obst, double v_max) {
+			// k is coefficient of similar triangles - negative values means that v(t) does not cross v_max
+			double common = brake * (-cur_speed * cur_speed - 2 * accel * obst);
+			return (v_max * v_max * (brake + accel) + common)
+			/ (2 * v_max * cur_speed * (brake + accel) - v_max * v_max * (brake - accel) + common);
+		}
+
+		constexpr double calc_tstop2(double obst) {
+			// formula for t_stop2 when k < 0
+			return (-(brake + accel) * cur_speed + sqrt((cur_speed * cur_speed * brake) * (brake + accel) + 2*(accel+brake+obst) * (accel * brake)))
+				/ ((brake + accel) * accel);
+		}
+		//constexpr double area(double v1, double v2) {}
 
 		// TODO: fix movement calculation, implement proper visualization, document, then finish up
 		void move(double dt) { // dt - delta time
+			double min_braking_dist = cur_speed * (cur_speed / brake) / 2.0;
 			double vision = max_dist(dt) + min_braking_dist;
 			double obst = closest_obst(this, vision);
 			double min_d = min_dist(dt);
@@ -821,12 +848,51 @@ namespace traffic_sim {
 
 			if(obst < 0.0) {
 				move_dist(max_d); // no obstacles ahead, go full power
-				set_speed(min(min(cur_speed + dt * accel, max_speed), cur_segment->max_speed));
+				set_speed(min(min(cur_speed + dt * accel, max_speed), cur_segment->max_speed), false);
 				return;
 			} else {
-				// slow down on a stable "collision course"
-				double deaccel = cur_speed * cur_speed / (2.0 * obst);
-				move_dist(max(min_d, (deaccel * dt) * dt / 2.0 + dt * (cur_speed - deaccel * dt)), dt);
+
+				double v_max = get_max_speed();
+				if(v_max - cur_speed <= EPSILON) {
+					double t_stop = (2*brake*obst - cur_speed * cur_speed)
+								/(2*brake*cur_speed);
+					if(t_stop < 0) move_dist(min_d, dt);
+					else if(t_stop > dt) move_dist(max_d, dt);
+					else {
+						move_dist(t_stop * cur_speed);
+						move_dist(area(cur_speed, -brake, dt-t_stop), dt-t_stop);
+					}
+					return;
+				}
+				// formula for movement calculation: https://www.desmos.com/calculator/zlqnsvq0d1
+				// calculates the time at which the car should stop to minimize the time it takes to reach obst
+				double k = calc_k(v_max, obst);
+
+				double t_stop = (v_max - cur_speed) / (accel * (1-k)); // negative t_stop means that the crossing is behind the x axis
+				if(t_stop <= 0) move_dist(min_d, dt); // t_stop
+				else if(k > 0){
+					double t_max1 = max(0.0, (v_max - cur_speed) / accel);
+					double t_max2 = t_stop + (accel * t_stop * k) / brake;
+					if(t_max2 > dt) move_dist(max_d, dt);
+					else {
+						move_dist(area(cur_speed, accel, t_max1));
+						set_speed(v_max);
+						move_dist(area(cur_speed, 0, t_max2-t_max1));
+						move_dist(area(cur_speed, brake, dt-t_max2), dt-t_max2);
+					}
+				} else {
+					// negative k: obst is too far to reach maximum speed before meeting
+					// negative k messes up the calculation for the other faces, so a different formula is needed
+					//t_stop = (2 * brake * obst - cur_speed * cur_speed) * (accel + brake) / (2 * cur_speed + )
+					double t_stop2 = calc_tstop2(obst);
+					if(t_stop2 > dt) move_dist(max_d, dt);
+					else if(t_stop2 < 0) move_dist(min_d, dt);
+					else {
+						move_dist(area(cur_speed, accel, t_stop2), t_stop2);
+						move_dist(area(cur_speed, -brake, dt - t_stop2), dt - t_stop2);
+					}
+				}
+
 				//cout << "approaching" << endl;
 
 			}
@@ -854,7 +920,7 @@ namespace traffic_sim {
 		if(c->cur_segment->is_red()) min_dist = min(min_dist, c->cur_segment->length - c->segment_position);
 
 		// min_dist == 1e20 if no obstacles were found
-		if(min_dist < 1e20) return min_dist - DEFAULT_CAR_RADIUS; // adding radius in order to leave distance between the cars
+		if(min_dist < 1e20) return min_dist;// - DEFAULT_CAR_RADIUS; // adding radius in order to leave distance between the cars
 
 		// cur dist is the distance covered so far
 		double cur_dist = c->cur_segment->length - c->segment_position;
@@ -870,7 +936,7 @@ namespace traffic_sim {
 			if(c->path[i]->is_red()) min_dist = min(min_dist, c->path[i]->length + cur_dist);
 
 			// min_dist == 1e20 if no obstacles were found
-			if(min_dist < 1e20) return min_dist - DEFAULT_CAR_RADIUS; // adding radius in order to leave distance between the cars
+			if(min_dist < 1e20) return min_dist;// - DEFAULT_CAR_RADIUS; // adding radius in order to leave distance between the cars
 
 			// add current segment's length to cur_dist
 			cur_dist += c->path[i]->length;
