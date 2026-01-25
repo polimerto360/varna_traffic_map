@@ -14,6 +14,7 @@ var s_gr = preload("res://s.tres")
 var time: float = 0.0
 var step = 0.1
 var cars = {}
+var traffic_lights = {}
 var timer: Timer
 # Called when the node enters the scene tree for the first time.
 func _ready() -> void:
@@ -27,6 +28,7 @@ func _ready() -> void:
 	#await t.timeout
 	var lines = 0;
 	var curr_cars = []
+	var curr_traffic_lights = []
 	for line in FileAccess.open(OUT_PATH, FileAccess.READ).get_as_text().split("\n"):
 		if !line: continue
 		var args = line.split(" ")
@@ -53,10 +55,14 @@ func _ready() -> void:
 			lines += 1
 		if(args[0] == "car"):
 			curr_cars.append(Vector2(float(args[1]) / 100.0, float(args[2]) / -100.0))
+		if(args[0] == "trl"):
+			curr_traffic_lights.append([Vector2( int(args[1])/100.0, int(args[2])/-100.0), Vector2( int(args[3])/100.0, int(args[4])/-100.0), args[5]])
 		if(args[0] == "t"):
 			cars[time] = curr_cars.duplicate()
+			traffic_lights[time] = curr_traffic_lights.duplicate()
 			time = snapped(float(args[1]), step);
 			curr_cars.clear()
+			curr_traffic_lights.clear()
 	print("segments: ", lines)
 	cars[time] = curr_cars
 	time = 0.0
@@ -81,10 +87,13 @@ func _draw():
 	#l.add_point(Vector2( 0, 5 ))
 	#l.width = 1
 	#add_child(l)
-	time = snapped(time, 0.1)
+	time = snapped(time, step)
 	if(cars.has(time)):
 		for car in cars[time]:
 			draw_circle(car, 5, Color.CORAL, true)
+	if(traffic_lights.has(time)):
+		for trl in traffic_lights[time]:
+			draw_line(trl[0], trl[1], Color.LIME_GREEN if trl[2] == 'g' else Color.RED)
 	
 
 # Called every frame. 'delta' is the elapsed time since the previous frame.

@@ -37,7 +37,7 @@ namespace config {
 	const int MIN_VISITORS = 5; 
 	
 	const double DEFAULT_ROAD_SPEED = 13.88; // default road speed in m/s
-	const double DEFAULT_CAR_RADIUS = 3.0;
+	const double DEFAULT_CAR_RADIUS = 6.0; // minimum allowed distance between cars in m
 	const double DEFAULT_CAR_ACCELERATION = 3.5; // m/s^2
 	const double DEFAULT_CAR_BRAKING = 7;
 
@@ -45,8 +45,8 @@ namespace config {
 	const double DEFAULT_TRAFFIC_LIGHT_OFF_TIME = 45.0;
 	const int MAX_CARS = 1000; // total number of cars in the simulation
 	const double EPSILON = 0.000000001;
-	const double MIN_SPEED = -1.0;
-	const double DIST_COMPENSATION = 1.0;
+
+	const double RANDOM_EVENT_CHANCE = 0.2;
 }
 
 namespace traffic_sim
@@ -176,13 +176,13 @@ namespace traffic_sim
 		double max_speed; // maximum speed allowed on the segment
 
 		//traffic light, at segment's end
-		double on_time = 0;
-		double off_time = 1;
+		double on_time = 1;
+		double off_time = 0;
 		double phase_offset = 0;
 
-		bool is_red() {
-			if(on_time == 0) return false;
-			return true;
+		bool is_red() const {
+			if(off_time == 0) return false;
+			//cout << fmod(cur_time + phase_offset, on_time + off_time) << endl;
 			return (fmod(cur_time + phase_offset, on_time + off_time) > on_time);
 		}
 
@@ -191,24 +191,30 @@ namespace traffic_sim
 			return s.start == start && s.end == end;// && s.length == length;
 		}
 
-		segment(const Node& s, const Node& e, const double ms, const double len = 0, const double on_time = 0, const double off_time = DEFAULT_TRAFFIC_LIGHT_OFF_TIME, const double phase_offset = 0) {
-			start = s.xy();
-			end = e.xy();
-			max_speed = ms;
-			length = len;
-			if(len == 0) length = coord_dist(start, end);
-			this->on_time = on_time; // on = green
-			this->off_time = off_time;
-			this->phase_offset = phase_offset;
-
-			cars = vector<car*>(0);
-		}
-		segment(point _p1, point _p2, const double ms, const double len = 0) {
+		// segment(const Node& s, const Node& e, const double ms, const double len = 0, const double on_time = DEFAULT_TRAFFIC_LIGHT_ON_TIME, const double off_time = 0, const double phase_offset = 0.0) {
+		// 	start = s.xy();
+		// 	end = e.xy();
+		// 	max_speed = ms;
+		// 	length = len;
+		// 	if(len == 0) length = coord_dist(start, end);
+		// 	this->on_time = on_time; // on = green
+		// 	this->off_time = off_time;
+		// 	if(phase_offset < EPSILON) this->phase_offset = rng::random_double(0, on_time + off_time);
+		// 	else this->phase_offset = phase_offset;
+  //
+		// 	cout << "on time: " << this->on_time << "; off time: " << this->off_time << "; phase: " << this->phase_offset << endl;
+		// 	cars = vector<car*>(0);
+		// }
+		segment(point _p1, point _p2, const double ms, const double len = 0, double off_time = 0.0) {
 			start = coord_from_point(_p1);
 			end = coord_from_point(_p2);
 			max_speed = ms;
 			length = len;
-			if(len == 0) length = coord_dist(start, end);
+			if(len < EPSILON) length = coord_dist(start, end);
+
+			on_time = DEFAULT_TRAFFIC_LIGHT_ON_TIME;
+			this->off_time = off_time;
+			phase_offset = rng::random_double(0, on_time + off_time);
 
 			cars = vector<car*>(0);
 		}
@@ -251,14 +257,19 @@ namespace traffic_sim
 		return out;
 	}
 
-	static ostream& operator<<(ostream& out, const segment& seg)
-	{
-		out << seg.start << " -> " << seg.end << "; len = " << seg.length;
-		return out;
-	}
+	// static ostream& operator<<(ostream& out, const segment& seg)
+	// {
+	// 	out << seg.start << " -> " << seg.end << "; len = " << seg.length;
+	// 	return out;
+	// }
 
 	void output_segment(ostream& out, const segment& seg, char type) {
 		out << "seg " << seg.start.x << " " << seg.start.y << " " << seg.end.x << " " << seg.end.y << " " << type << endl;
+		return;
+	}
+
+	void output_traffic_light(ostream& out, const segment& seg) {
+		out << "trl " << seg.start.x << " " << seg.start.y << " " << seg.end.x << " " << seg.end.y << " " << (seg.is_red() ? 'r' : 'g') << endl;
 		return;
 	}
 
@@ -266,6 +277,7 @@ namespace traffic_sim
 
 	bool is_init = false;
 	vector<point> all_nodes;
+	vector<point> traffic_light_nodes;
 
 	point closest_point(Coordinate x) {
 		point x_p = (point)x;
@@ -577,13 +589,17 @@ namespace pathfinding {
 				all_nodes.push_back(from);
 				all_nodes.push_back(to);
 
-				segment seg(from, to, speed);
+
+				double off_time = 0.0;
 				if((node_list[i+1].hasTag("highway") && node_list[i+1]["highway"] == "traffic_signals")){// || (node_list[i+1].hasTag("crossing") && node_list[i+1]["crossing"] == "traffic_signals") || (node_list[i+1].hasTag("traffic_signals"))) {
-					seg.on_time = DEFAULT_TRAFFIC_LIGHT_ON_TIME;
+					off_time = DEFAULT_TRAFFIC_LIGHT_OFF_TIME;
+					traffic_light_nodes.push_back(from);
 				}
 
+				segment seg(from, to, speed, 0.0, off_time);
+
 				graph[from].push_back(seg); // add the segment to the adjacency list for the starting point
-				output_segment(out_file, seg, seg.on_time ? 'k' : 'f');
+				output_segment(out_file, seg, seg.off_time ? 'k' : 'f');
 				seg_count++;
 
 				if (r["oneway"] == "yes" || r["oneway"] == "true" || r["oneway"] == "1" || (r.hasTag("junction") && r["junction"] == "roundabout")) {
@@ -591,13 +607,15 @@ namespace pathfinding {
 					continue; // for one way roads skip
 				}
 
+				off_time = 0.0;
 
-				segment newseg(to, from, speed);
 				if((node_list[i].hasTag("highway") && node_list[i]["highway"] == "traffic_signals")){// || (node_list[i+1].hasTag("crossing") && node_list[i+1]["crossing"] == "traffic_signals") || (node_list[i+1].hasTag("traffic_signals"))) {
-					newseg.on_time = DEFAULT_TRAFFIC_LIGHT_ON_TIME;
+					off_time = DEFAULT_TRAFFIC_LIGHT_OFF_TIME;
+					traffic_light_nodes.push_back(to);
 				}
+				segment newseg(to, from, speed, 0.0, off_time);
 				graph[to].push_back(newseg);
-				output_segment(out_file, newseg, newseg.on_time ? 'k' : 'r');
+				output_segment(out_file, newseg, newseg.off_time ? 'k' : 'r');
 				seg_count++;
 
 			}
@@ -701,6 +719,7 @@ namespace traffic_sim {
 		double max_speed;
 		double accel;
 		double brake;
+		double obst = 0.0;
 		segment* cur_segment;
 		double segment_position = 0.0;
 		vector<segment*> path;
@@ -741,9 +760,16 @@ namespace traffic_sim {
 		void reset() {
 			should_reset = true;
 		}
+		void set_speed(double s) { // sets and clamps speed
+			cur_speed = min(min(max(s, 0.0), max_speed), cur_segment->max_speed);
+		}
+		double get_max_speed() {
+			return min(max_speed, cur_segment->max_speed);
+		}
 		double max_dist(double dt) { // calculate maximum distance reachable in dt (delta time)
+			double max_v = get_max_speed();
 			double base_dist = cur_speed * dt;
-			double max_point = (max_speed - cur_speed) / accel;
+			double max_point = (max_v - cur_speed) / accel;
 			/*
 			 * 13.8  ---------------------
 			 *      /|                   |
@@ -758,9 +784,9 @@ namespace traffic_sim {
 
 			 */
 
-			double s_1 = max_point < EPSILON ? 0.0 : min(max_point, dt) * max_speed / max_point / 2.0;
+			double s_1 = max_point < EPSILON ? 0.0 : min(max_point, dt) * max_v / max_point / 2.0;
 			//                 (1)   (                 2                )
-			return base_dist + s_1 + max(dt - max_point, 0.0) * max_speed;
+			return base_dist + s_1 + max(dt - max_point, 0.0) * max_v;
 		}
 		double min_dist(double dt) { // calculate minimum distance reachable in dt (delta time)
 			double min_point = min(cur_speed / brake, dt);
@@ -785,13 +811,6 @@ namespace traffic_sim {
 			return top + (cur_speed - dv) * min_point;
 		}
 
-		void set_speed(double s, bool slowing_down = true) { // sets and clamps speed
-			if(slowing_down && s < MIN_SPEED) s = 0,0;
-			else cur_speed = min(min(max(s, 0.0), max_speed), cur_segment->max_speed);
-		}
-		double get_max_speed() {
-			return min(max_speed, cur_segment->max_speed);
-		}
 
 		constexpr double area(double v1, double accel, double len) {
 			double v2 = v1 + accel * len;
@@ -800,9 +819,10 @@ namespace traffic_sim {
 
 		void move_dist(double dist, double dt = -1.0) {
 			//if(dist < MIN_DIST) dist = 0.0;
+			if(obst > 0.0) dist = max(min(dist, obst - DEFAULT_CAR_RADIUS), 0.0);
 			if(dt > 0.0) { // dt being positive signals recalculaion of cur_speed
 				double mid = dist/dt;
-				set_speed(cur_speed + (mid-cur_speed) * 2.0, mid < cur_speed); // linear extrapolation
+				set_speed(cur_speed + (mid-cur_speed) * 2.0); // linear extrapolation
 			}
 			if(cur_speed > EPSILON) segment_position += dist;
 			while(segment_position >= cur_segment->length) {
@@ -840,18 +860,18 @@ namespace traffic_sim {
 
 		// TODO: fix movement calculation, implement proper visualization, document, then finish up
 		void move(double dt) { // dt - delta time
-			double min_braking_dist = cur_speed * (cur_speed / brake) / 2.0;
+			double min_braking_dist = get_max_speed() * (get_max_speed() / brake) / 2.0;
 			double vision = max_dist(dt) + min_braking_dist;
-			double obst = closest_obst(this, vision);
+			obst = closest_obst(this, vision);
 			double min_d = min_dist(dt);
 			double max_d = max_dist(dt);
 
 			if(obst < 0.0) {
 				move_dist(max_d); // no obstacles ahead, go full power
-				set_speed(min(min(cur_speed + dt * accel, max_speed), cur_segment->max_speed), false);
+				set_speed(cur_speed + dt * accel);
 				return;
 			} else {
-
+				if(obst <= DEFAULT_CAR_RADIUS) {obst = 0.0; move_dist(0.0); cur_speed = 0.0; return;}
 				double v_max = get_max_speed();
 				if(v_max - cur_speed <= EPSILON) {
 					double t_stop = (2*brake*obst - cur_speed * cur_speed)
@@ -1106,13 +1126,18 @@ namespace traffic_sim {
 	void events_init() {
 		(void)(VERBOSE && cout << "CREATING EVENTS" << endl);
 		auto t1 = chrono::high_resolution_clock::now();
-		int count = 0;
 		for(person& p : people) {
+			if(!p.can_drive) continue;
 			if(!p.work) {
-				// TODO: random events for the unemployed
+				if (rng::random_chance(RANDOM_EVENT_CHANCE)) {
+					events.emplace(
+						rng::random_double(0, SIM_LENGTH),
+						event::GO_RANDOM,
+						&p
+					);
+				}
 				continue;
 			}
-			if(++count > MAX_CARS) break;
 			events.emplace(
 				//time_hms(8, 30+rng::normal_int(-30, 30), rng::random_double(-60, 60)),
 				time_hms(0, 1, rng::random_double(-60, 60)),
@@ -1120,12 +1145,13 @@ namespace traffic_sim {
 						event::GO_TO_WORK,
 					&p
 			);
-			events.emplace(
-				time_hms(17, 30+rng::normal_int(-30, 30), rng::random_double(-60, 60)),
-						//time_hms(17, 30+rng::normal_int(-30, 30), rng::random_double(-60, 60)),
-						event::GO_HOME,
-					&p
-			);
+			// events.emplace(
+			// 	time_hms(17, 30+rng::normal_int(-30, 30), rng::random_double(-60, 60)),
+			// 			//time_hms(17, 30+rng::normal_int(-30, 30), rng::random_double(-60, 60)),
+			// 			event::GO_HOME,
+			// 		&p
+			// );
+			if(events.size() > MAX_CARS) break;
 			//cout << "age " << p.age << " - home: " <<  (coord_from_point(p.home->location));
 			//if(p.work) cout << "; work: " << (coord_from_point(p.work->location));
 			//cout << "; can drive: " << p.can_drive << endl;
@@ -1150,8 +1176,11 @@ namespace traffic_sim {
 				p.p_car->update_position();
 				out_file << p.p_car.value() << endl;
 			}
-
-
+		}
+		for(point p : traffic_light_nodes) {
+			for(segment &s : graph[p]) {
+				if(s.off_time > 0) output_traffic_light(out_file, s);
+			}
 		}
 	}
 }
