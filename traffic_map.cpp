@@ -40,6 +40,7 @@ int main(int argc, char *argv[])
 	if(argc > 1) strcpy(city, argv[1]);
 	string query = city;
 	query = "a[admin_level=5][name:en=" + query + "]";
+	//query = "a[admin_level=8][int_name=" + query + "]";
 
 	cout << "querying " << query << endl;
 	Feature varna = features(query.c_str()).one(); // whole varna

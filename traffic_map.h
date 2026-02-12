@@ -17,7 +17,7 @@
 #include <functional>
 
 namespace config {
-	bool VERBOSE = false;
+	bool VERBOSE = true;
 
 	std::ofstream out_file("out.txt", std::ofstream::trunc | std::ofstream::out);
 
@@ -46,7 +46,7 @@ namespace config {
 	const int MAX_CARS = 1000; // total number of cars in the simulation
 	const double EPSILON = 0.000000001;
 
-	const double RANDOM_EVENT_CHANCE = 0.2;
+	const double RANDOM_EVENT_CHANCE = 0.2; // chance for an unemployed person to go outside
 }
 
 namespace traffic_sim
@@ -189,6 +189,16 @@ namespace traffic_sim
 		bool operator==(const segment& s) const
 		{
 			return s.start == start && s.end == end;// && s.length == length;
+		}
+
+		double angle(const segment& other) {
+			return acos
+			(
+				(
+					(end.x - start.x) * (other.end.x - other.start.x) + (end.y - start.y) * (other.end.y - other.start.y)
+				) /
+					(sqrt( (end.x - start.x) * (end.x - start.x) + (end.y - start.y) * (end.y - start.y) ) * sqrt( (other.end.x - other.start.x) * (other.end.x - other.start.x) + (other.end.y - other.start.y) * (other.end.y - other.start.y) ))
+			);
 		}
 
 		// segment(const Node& s, const Node& e, const double ms, const double len = 0, const double on_time = DEFAULT_TRAFFIC_LIGHT_ON_TIME, const double off_time = 0, const double phase_offset = 0.0) {
@@ -461,6 +471,11 @@ namespace pathfinding {
 		while(graph[from].size() == 1) {
 			first_steps.push_back(&graph[from][0]);
 			from = (point)graph[from][0].end;
+			if(from == to) {
+				for(segment* s : first_steps) {
+					path.push_back(s);
+				}
+			}
 		}
 		reverse(first_steps.begin(), first_steps.end());
 		if(unique_neighbors(from) == 0 || unique_neighbors(to) == 0 || is_dead_end(from) || is_source(to)) return from == to;
@@ -721,6 +736,7 @@ namespace traffic_sim {
 		double brake;
 		double obst = 0.0;
 		segment* cur_segment;
+		segment* next_segment = nullptr;
 		double segment_position = 0.0;
 		vector<segment*> path;
 
@@ -825,8 +841,10 @@ namespace traffic_sim {
 				set_speed(cur_speed + (mid-cur_speed) * 2.0); // linear extrapolation
 			}
 			if(cur_speed > EPSILON) segment_position += dist;
-			while(segment_position >= cur_segment->length) {
+			while(segment_position >= cur_segment->length) { // moving into next segment
 				segment_position -= cur_segment->length;
+
+
 				for (vector<car*>::iterator it = cur_segment->cars.begin(); it != cur_segment->cars.end(); it++)
 				{
 					if (*it == this) {
@@ -840,8 +858,25 @@ namespace traffic_sim {
 					reset();
 					return;
 				}
+
+				// slow down for turns, formula: https://www.desmos.com/calculator/to2fkqowrh
+				double angle = cur_segment->angle(*path.front());
+				cur_speed *= abs(cos(angle / (get_max_speed() / cur_speed * 2.3)));
+
 				cur_segment = path.front();
 				cur_segment->cars.push_back(this);
+
+				// setting next_segment for lane checking
+				if(next_segment == &short_segments[*cur_segment] || next_segment == nullptr) {
+					for(segment* s : path) {
+						if(short_segments[*s] != short_segments[*cur_segment]) {
+							next_segment = &short_segments[*s];
+							goto endif;
+						}
+					}
+					next_segment = nullptr;
+				}
+				endif:;
 			}
 		}
 		constexpr double calc_k(double obst, double v_max) {
@@ -935,6 +970,9 @@ namespace traffic_sim {
 	double closest_obst(car* c, double vision) {
 		double min_dist = 1e20;
 		for(car* other : c->cur_segment->cars) { // special case for current segment - check if the cars are in front
+			// ignore different lanes
+			if(c->next_segment == nullptr || other->next_segment == nullptr) continue;
+			if(*(c->next_segment) != *(other->next_segment)) continue;
 			if(other->segment_position - c->segment_position > 0.0) min_dist = min(min_dist, other->segment_position - c->segment_position);
 		}
 		if(c->cur_segment->is_red()) min_dist = min(min_dist, c->cur_segment->length - c->segment_position);
@@ -950,6 +988,9 @@ namespace traffic_sim {
 		for(int i = 1; i <= seg_count; i++) { // skip current segment
 			// check cars
 			for(car* other : c->path[i]->cars) {
+				// ignore different lanes
+				if(c->next_segment == nullptr || other->next_segment == nullptr) continue;
+				if(*(c->next_segment) != *(other->next_segment)) continue;
 				min_dist = min(min_dist, cur_dist + other->segment_position);
 			}
 			// check red light
@@ -1064,7 +1105,7 @@ namespace traffic_sim {
 		for (const Feature& f : workplace_features)
 		{
 			workplaces.emplace_back(f, (f["building"] == "school") ? building::SCHOOL : building::WORKPLACE);
-			//cout << "Workplace: " << b.name << ", Capacity: " << b.capacity << ", Location: " << coord_from_point(b.location) << endl;
+			cout << "Workplace: " << workplaces.back().name << ", Capacity: " << workplaces.back().capacity << ", Location: " << workplaces.back().location << endl;
 			count += workplaces.back().capacity;
 		}
 

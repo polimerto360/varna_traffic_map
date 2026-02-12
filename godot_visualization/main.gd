@@ -53,6 +53,7 @@ func _ready() -> void:
 				l.default_color = Color.from_hsv(ord(args[5]) / 20.0, 1, 1)
 			add_child(l)
 			lines += 1
+			$Camera2D.position = l.points[0]
 		if(args[0] == "car"):
 			curr_cars.append(Vector2(float(args[1]) / 100.0, float(args[2]) / -100.0))
 		if(args[0] == "trl"):
@@ -71,7 +72,6 @@ func _ready() -> void:
 	timer.timeout.connect(time_out)
 	timer.one_shot = false
 	timer.start(step);
-
 func time_out():
 	time += step
 	print("time = ", time)
@@ -132,6 +132,8 @@ func _input(event: InputEvent) -> void:
 				timer.start(abs(step))
 			else:
 				timer.stop()
+		if Input.is_key_pressed(KEY_BRACKETLEFT): time -= 5.0
+		if Input.is_key_pressed(KEY_BRACKETRIGHT): time += 5.0
 			
 	if event is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		$Camera2D.position -= event.screen_relative / $Camera2D.zoom
