@@ -8,7 +8,7 @@ project ("traffic_map" LANGUAGES CXX)
 
 # Add source to this project's executable.
 #add_executable (traffic_map "traffic_map.cu" "traffic_map.h")
-add_executable (traffic_map "traffic_map.cpp" "traffic_map.h")
+add_executable (traffic_map "traffic_map.cpp" "traffic_map.hpp")
 
 # TODO: Add tests and install targets if needed.
 

@@ -1,7 +1,7 @@
 ﻿// traffic_map.cpp : Defines the entry point for the application.
 //
 
-#include "traffic_map.h"
+#include "traffic_map.hpp"
 
 using namespace std;
 using namespace geodesk;

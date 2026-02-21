@@ -5,6 +5,7 @@
 
 #include <iostream>
 #include <geodesk/geodesk.h>
+#include <utility>
 #include <vector>
 #include <map>
 #include <unordered_map>
@@ -15,38 +16,41 @@
 #include <queue>
 #include <random>
 #include <functional>
+#include <ranges>
 
 namespace config {
-	bool VERBOSE = true;
+	inline bool VERBOSE = true;
 
 	std::ofstream out_file("out.txt", std::ofstream::trunc | std::ofstream::out);
 
 
-	const double TIME_STEP = 0.1; // time step in seconds
-	const double SIM_LENGTH = 86400.0; // how long to run the simulation
-	const double DEFAULT_BUILDING_HEIGHT = 5.0; // default building height in meters
+	constexpr double TIME_STEP = 0.1; // time step in seconds
+	constexpr double SIM_LENGTH = 100.0; // how long to run the simulation
+	constexpr double DEFAULT_BUILDING_HEIGHT = 5.0; // default building height in meters
+
 	// target workplaces is 150000
-	const double EMPLOYEE_DENSITY = 0.038; // people per cubic meter (adding 0.01 increases result by 56309)
-	const int MIN_EMPLOYEES = 5; // minimum people per workplace (adds or subtracts 2861)
+	constexpr double EMPLOYEE_DENSITY = 0.038; // people per cubic meter (adding 0.01 increases result by 56309)
+	constexpr int MIN_EMPLOYEES = 5; // minimum people per workplace (adds or subtracts 2861)
 
 	// target residents is 350000
-	const double RESIDENTIAL_DENSITY = 0.012;
-	const int MIN_RESIDENTS = 3;
+	constexpr double RESIDENTIAL_DENSITY = 0.012;
+	constexpr int MIN_RESIDENTS = 3;
 
-	const double ENTERTAINMENT_DENSITY = 0.024; 
-	const int MIN_VISITORS = 5; 
+	constexpr double ENTERTAINMENT_DENSITY = 0.024;
+	constexpr int MIN_VISITORS = 5;
 	
-	const double DEFAULT_ROAD_SPEED = 13.88; // default road speed in m/s
-	const double DEFAULT_CAR_RADIUS = 6.0; // minimum allowed distance between cars in m
-	const double DEFAULT_CAR_ACCELERATION = 3.5; // m/s^2
-	const double DEFAULT_CAR_BRAKING = 7;
+	constexpr double DEFAULT_ROAD_SPEED = 13.88; // default road speed in m/s
+	constexpr double DEFAULT_CAR_RADIUS = 6.0; // minimum allowed distance between cars in m
+	constexpr double DEFAULT_CAR_ACCELERATION = 3.5; // m/s^2
+	constexpr double DEFAULT_CAR_BRAKING = 7;
 
-	const double DEFAULT_TRAFFIC_LIGHT_ON_TIME = 15.0; // on means green, off means red
-	const double DEFAULT_TRAFFIC_LIGHT_OFF_TIME = 45.0;
-	const int MAX_CARS = 1000000; // total number of cars in the simulation
-	const double EPSILON = 0.000000001;
 
-	const double RANDOM_EVENT_CHANCE = 0.2; // chance for an unemployed person to go outside
+	constexpr double DEFAULT_TRAFFIC_LIGHT_ON_TIME = 15.0; // on means green, off means red
+	constexpr double DEFAULT_TRAFFIC_LIGHT_OFF_TIME = 45.0;
+	constexpr int MAX_CARS = 1000; // total number of cars in the simulation
+	constexpr double EPSILON = 0.000000001;
+
+	constexpr double RANDOM_EVENT_CHANCE = 0.2; // chance for an unemployed person to go outside
 }
 
 namespace traffic_sim
@@ -57,76 +61,75 @@ namespace traffic_sim
 
 	typedef int64_t point; // hash for node coordinates
 
-	double cur_time = 0; //seconds (0 - 86400)
+	inline double cur_time = 0; //seconds (0 - 86400)
 
-	double time_hms(int hours, int minutes, double seconds) {
+	constexpr double time_hms(const int hours, const int minutes, const double seconds) {
 		return hours * 3600 + minutes * 60 + seconds;
 	}
 
-	uint64_t first_half(int32_t x) {
-		return (uint64_t)x & 0b1111111111111111;
+	constexpr uint64_t first_half(const int32_t x) {
+		return static_cast<uint64_t>(x) & 0b1111111111111111;
 	}
 
-	point node_to_point(Node n) {
-		return (point)n.xy();
+	constexpr point node_to_point(const Node& n) {
+		return static_cast<point>(n.xy());
 	}
 
 	Coordinate coord_from_point(point p) {
-		int32_t y = (int32_t)(p >> 32);
-		int32_t x = (int32_t)(p & 0xFFFFFFFF);
-		return Coordinate(x, y);
+		auto y = static_cast<int32_t>(p >> 32);
+		auto x = static_cast<int32_t>(p & 0xFFFFFFFF);
+		return {x, y};
 	}
 
-	double deg_to_rad(double deg) {
+	constexpr double deg_to_rad(const double deg) {
 		return deg / 180.0 * numbers::pi;
 	}
 
-	double hav(double x) {
+	constexpr double hav(double x) {
 		return pow(sin(x/2), 2);
 	}
-	double ahav(double x) {
+
+	constexpr double ahav(const double x) {
 		return 2 * asin(sqrt(x));
 	}
 
-	constexpr double imp_to_m(int imps) {
-		return (unsigned int)imps * 0.006801778856644; // conversion factor centered at 43.2 degrees of latitude
+	constexpr double imp_to_m(const double imps) {
+		return imps * 0.006801778856644; // conversion factor centered at 43.2 degrees of latitude
 	}
 
-	constexpr double kmh_to_ms(double kmh) {
+	constexpr double kmh_to_ms(const double kmh) {
 		return kmh / 3.6;
 	}
 
-	double coord_dist(Coordinate a, Coordinate b) {
+	constexpr double coord_dist(const Coordinate a, const Coordinate b) {
 		// euclid distance - inaccurate
-		double par1 = (a.x-b.x);
-		double par2 = (a.y-b.y);
-		// assert(par1 * par1 + par2 * par2 >= 0);
-		return imp_to_m(sqrt(par1 * par1 + par2 * par2));
-
-
+		return imp_to_m(hypot(a.x - b.x, a.y - b.y));
 	}
-	double coord_dist_accurate(Coordinate a, Coordinate b) {
+
+	double coord_dist_accurate(const Coordinate a, const Coordinate b) {
 		// great circle distance - extremely slow
 		constexpr double r = 6371000.0;
-		double lon1 = deg_to_rad(a.lon());
-		double lat1 = deg_to_rad(a.lat());
-		double lon2 = deg_to_rad(b.lon());
-		double lat2 = deg_to_rad(b.lat());
+		const double lon1 = deg_to_rad(a.lon());
+		const double lat1 = deg_to_rad(a.lat());
+		const double lon2 = deg_to_rad(b.lon());
+		const double lat2 = deg_to_rad(b.lat());
 
-		double angle = ahav(hav(abs(lat1-lat2)) + (1 - hav(abs(lat1-lat2)) - hav(lat1+lat2)) * hav(abs(lon1-lon2)));
+		const double angle = ahav(hav(abs(lat1-lat2)) + (1 - hav(abs(lat1-lat2)) - hav(lat1+lat2)) * hav(abs(lon1-lon2)));
 		return r * angle;
 
 	}
-	double coord_dist_accurate(point a, point b) {
+
+	inline double coord_dist_accurate(const point a, const point b) {
 		return coord_dist_accurate(coord_from_point(a), coord_from_point(b));
 	}
-	double coord_dist(point a, point b) {
+
+	double coord_dist(const point a, const point b) {
 		if(a == b) return 0;
 		return coord_dist(coord_from_point(a), coord_from_point(b));
 	}
 
 	namespace rng {
-		random_device rd;
+		inline random_device rd;
 		static mt19937 mt_gen;
 
 		void randomize() {
@@ -134,29 +137,29 @@ namespace traffic_sim
 			mt_gen.seed(dist(rd));
 		}
 
-		int random_int(int min_val, int max_val) {
+		int random_int(const int min_val, const int max_val) {
 			uniform_int_distribution<int> dist(min_val, max_val);
 			return dist(mt_gen);
 		}
-		double random_double(double min_val, double max_val) {
+		double random_double(const double min_val, const double max_val) {
 			uniform_real_distribution<double> dist(min_val, max_val);
 			return dist(mt_gen);
 		}
-		double normal_int(double mean, double stddev) {
+		double normal_int(const double mean, const double stddev) {
 			normal_distribution<double> dist(mean, stddev);
-			return (int)round(dist(mt_gen));
+			return static_cast<int>(round(dist(mt_gen)));
 		}
-		double normal_double(double mean, double stddev) {
+		double normal_double(const double mean, const double stddev) {
 			normal_distribution<double> dist(mean, stddev);
 			return dist(mt_gen);
 		}
-		bool random_chance(double probability) {
+		bool random_chance(const double probability) {
 			uniform_real_distribution<double> dist(0.0, 1.0);
 			return dist(mt_gen) < probability;
 		}
-		double power_law_double(double min_val, double max_val, double exponent) {
-			double r = random_double(0.0, 1.0);
-			double scaled = pow(r, exponent);
+		double power_law_double(const double min_val, const double max_val, const double exponent) {
+			const double r = random_double(0.0, 1.0);
+			const double scaled = pow(r, exponent);
 			return min_val + (max_val - min_val) * scaled;
 		}
 	};
@@ -170,17 +173,17 @@ namespace traffic_sim
 	struct segment { // directed road segment
 		Coordinate start;
 		Coordinate end;
-		double length;
+		double length{};
 
 		vector<car*> cars;
-		double max_speed; // maximum speed allowed on the segment
+		double max_speed{}; // maximum speed allowed on the segment
 
 		//traffic light, at segment's end
 		double on_time = 1;
 		double off_time = 0;
 		double phase_offset = 0;
 
-		bool is_red() const {
+		[[nodiscard]] bool is_red() const {
 			if(off_time == 0) return false;
 			//cout << fmod(cur_time + phase_offset, on_time + off_time) << endl;
 			return (fmod(cur_time + phase_offset, on_time + off_time) > on_time);
@@ -191,7 +194,7 @@ namespace traffic_sim
 			return s.start == start && s.end == end;// && s.length == length;
 		}
 
-		double angle(const segment& other) {
+		[[nodiscard]] double angle(const segment& other) const {
 			return acos
 			(
 				(
@@ -218,7 +221,7 @@ namespace traffic_sim
 		// 	cout << "on time: " << this->on_time << "; off time: " << this->off_time << "; phase: " << this->phase_offset << endl;
 		// 	cars = vector<car*>(0);
 		// }
-		segment(point _p1, point _p2, const double ms, const double len = 0, double off_time = 0.0) {
+		segment(const point _p1, const point _p2, const double ms, const double len = 0, const double off_time = 0.0) {
 			start = coord_from_point(_p1);
 			end = coord_from_point(_p2);
 			max_speed = ms;
@@ -245,19 +248,19 @@ namespace traffic_sim
 		}
 		segment() = default;
 
-		uint64_t h() const { // hash function (segment direction matters) - preserves as much information as possible while still being a 64 bit int
-			return  *(uint64_t *)(&length) ^ ((first_half(start.x) << 48) |
+		[[nodiscard]] uint64_t h() const { // hash function (segment direction matters) - preserves as much information as possible while still being a 64 bit int
+			return  *reinterpret_cast<const uint64_t*>(&length) ^ ((first_half(start.x) << 48) |
 			(first_half(start.y) << 32) |
 			(first_half(end.x) << 16) |
 			first_half(end.y));
 		}
-		string h2() const { // hash function (segment direction matters)
+		[[nodiscard]] string h2() const { // hash function (segment direction matters)
 			stringstream ss;
-			ss << hex << (point)start.x << (point)end.x << length;
+			ss << hex << static_cast<point>(start.x) << static_cast<point>(end.x) << length;
 			return ss.str();
 		}
-		bool weak_equals(point p1, point p2) const {
-			return ( ((point)start == p1 && (point)end == p2) || ((point)start == p2 && (point)end == p1) );
+		[[nodiscard]] bool weak_equals(const point p1, const point p2) const {
+			return ( (static_cast<point>(start) == p1 && static_cast<point>(end) == p2) || (static_cast<point>(start) == p2 && static_cast<point>(end) == p1) );
 		}
 
 	};
@@ -278,26 +281,23 @@ namespace traffic_sim
 
 	void output_segment(ostream& out, const segment& seg, char type) {
 		out << "seg " << seg.start.x << " " << seg.start.y << " " << seg.end.x << " " << seg.end.y << " " << type << endl;
-		return;
 	}
 
 	void output_traffic_light(ostream& out, const segment& seg) {
 		out << "trl " << seg.start.x << " " << seg.start.y << " " << seg.end.x << " " << seg.end.y << " " << (seg.is_red() ? 'r' : 'g') << endl;
-		return;
 	}
 
 
+	inline bool is_init = false;
+	inline vector<point> all_nodes;
+	inline vector<point> traffic_light_nodes;
 
-	bool is_init = false;
-	vector<point> all_nodes;
-	vector<point> traffic_light_nodes;
-
-	point closest_point(Coordinate x) {
-		point x_p = (point)x;
-		point cur_p;
-		double min_dist = 1e20;
-		for(point& p : all_nodes) {
-			double cur_dist = coord_dist(x_p, p);
+	point closest_point(const Coordinate x) {
+		const auto x_p = static_cast<point>(x);
+		point cur_p = 0;
+		double min_dist = INFINITY;
+		for(const point& p : all_nodes) {
+			const double cur_dist = coord_dist(x_p, p);
 			if(cur_dist == 0) return x_p;
 
 			if(cur_dist < min_dist) {
@@ -328,7 +328,7 @@ namespace traffic_sim
 			name = loc["name"].storedString();
 			type = t;
 
-			if(name == "") {
+			if(name.empty()) {
 				if (t == RESIDENTIAL) name = "Unnamed Residential Building";
 				else if(t == ENTERTAINMENT) name = "Unnamed Entertainment Building";
 				else name = "Unnamed Workplace";
@@ -363,7 +363,7 @@ namespace traffic_sim
 					break;
 			}
 
-			capacity = max((int)(height * loc.area() * people_density), min_cap);
+			capacity = max(static_cast<int>(height * loc.area() * people_density), min_cap);
 		}
 
 		explicit operator point() const noexcept {
@@ -374,11 +374,12 @@ namespace traffic_sim
 	};
 
 
-	map<int64_t, vector<building>> residential_buildings; // map of residential area id to buildings in that area; initialized in main
+	inline map<int64_t, vector<building>> residential_buildings; // map of residential area id to buildings in that area; initialized in main
 }
 template<>
 struct std::hash<traffic_sim::segment> {
-	size_t operator()(const traffic_sim::segment& s) const {
+	size_t operator()(const traffic_sim::segment& s) const noexcept
+	{
 		return s.h();
 		//return hash<string>{}(s.h());
 	}
@@ -391,47 +392,47 @@ namespace pathfinding {
 	using namespace geodesk;
 	using namespace config;
 
-	map<point, vector<segment>> graph; // adjacency list representation of the road network graph
-	map<point, bool> visited;
-	map<point, double> dist;
+	inline map<point, vector<segment>> graph; // adjacency list representation of the road network graph
+	inline map<point, bool> visited;
+	inline map<point, double> dist;
 	//map<point, int> connected_to; // how many points are connected with one way inward connection to each point
-	map<point, int> component;
-	map<point, vector<point>> weak_connections; // connections from another point to the key point
-	unordered_map<segment, vector<segment*>> long_segments; // key - long segment; value - short segments that compose it
-	unordered_map<segment, segment> short_segments; // key - short segment; value - long segment it is a part of
-	map<point, vector<segment>> long_graph; // adjacency list for the long segments
+	inline map<point, int> component;
+	inline map<point, vector<point>> weak_connections; // connections from another point to the key point
+	inline unordered_map<segment, vector<segment*>> long_segments; // key - long segment; value - short segments that compose it
+	inline unordered_map<segment, segment> short_segments; // key - short segment; value - long segment it is a part of
+	inline map<point, vector<segment>> long_graph; // adjacency list for the long segments
 	//ifstream in_file("in.txt");
 
 
-	int unique_neighbors(point p) {
+	unsigned int unique_neighbors(point p) {
 		// all segments represent a unique neighbor
 		return graph[p].size() + weak_connections[p].size();
 	}
 
 	bool is_dead_end(point p) {
-		return graph[p].size() == 0;
+		return graph[p].empty();
 	}
 
 	bool is_source(point p) { // called only once, so no need to be very fast
-		if(weak_connections[p].size() > 0) return false;
+		if(!weak_connections[p].empty()) return false;
 		for(const segment& s : graph[p]) {
-			for(const segment& s1 : graph[(point)s.end]) {
+			for(const segment& s1 : graph[static_cast<point>(s.end)]) {
 				if(s1.end == s.start) return false;
 			}
 		}
 		return true;
 	}
 
-	bool dfs(point p, int comp) {
+	bool dfs(const point p, const int comp) {
 		if(visited[p]) return false;
 		visited[p] = true;
 		component[p] = comp;
 
 		for(const segment& s : graph[p]) {
 			//output_segment(out_file, s, '0' + comp);
-			dfs((point)s.end, comp);
+			dfs(static_cast<point>(s.end), comp);
 		}
-		for(point p2 : weak_connections[p])
+		for(const point p2 : weak_connections[p])
 			dfs(p2, comp);
 		return true;
 	}
@@ -439,29 +440,29 @@ namespace pathfinding {
 
 	void walk_forward(segment& s, vector<segment*>& out) {
 		out.push_back(&s);
-		point last = (point)s.start;
-		point curr = (point)s.end;
+		auto last = static_cast<point>(s.start);
+		auto curr = static_cast<point>(s.end);
 		unordered_set<point> cur_visited; // for O(1)
-		cur_visited.insert((point)s.start); // this sets the direction to explore - depends on the direction of s
+		cur_visited.insert(static_cast<point>(s.start)); // this sets the direction to explore - depends on the direction of s
 		cur_visited.insert(curr);
 		//assert(graph[curr].size() > 0);
 		while(graph.contains(curr) && (unique_neighbors(curr) == 2 || unique_neighbors(curr) == 1) ) {
 			// if it has one or two neighbours we can be sure that there can't be a split path ahead - there is either 1 or 0 possible nodes to continue to
 			int ind = -1; // ind is the index of the next edge on the adjacency list
 			for(int i = 0; i < graph[curr].size(); i++) {
-				if(cur_visited.contains((point)graph[curr][i].end) && graph[curr][i].weak_equals(last, curr)) continue;
+				if(cur_visited.contains(static_cast<point>(graph[curr][i].end)) && graph[curr][i].weak_equals(last, curr)) continue;
 				ind = i;
 				break;
 			}
 			if(ind == -1) return;
 			out.push_back(&graph[curr][ind]);
-			cur_visited.insert((point)graph[curr][ind].end);
+			cur_visited.insert(static_cast<point>(graph[curr][ind].end));
 			last = curr;
-			curr = (point)graph[curr][ind].end;
+			curr = static_cast<point>(graph[curr][ind].end);
 		}
 	}
 
-	bool find_path(point from, point to, vector<segment*>& path) {
+	bool find_path(point from, const point to, vector<segment*>& path) {
 		// A* with compressed graph; 86 ms for vladislavovo - zelenika
 
 		auto t1 = chrono::high_resolution_clock::now();
@@ -473,14 +474,14 @@ namespace pathfinding {
 
 		while(graph[from].size() == 1) {
 			first_steps.push_back(&graph[from][0]);
-			from = (point)graph[from][0].end;
+			from = static_cast<point>(graph[from][0].end);
 			if(from == to) {
 				for(segment* s : first_steps) {
 					path.push_back(s);
 				}
 			}
 		}
-		reverse(first_steps.begin(), first_steps.end());
+		ranges::reverse(first_steps);
 		if(unique_neighbors(from) == 0 || unique_neighbors(to) == 0 || is_dead_end(from) || is_source(to)) return from == to;
 		unordered_map<point, bool> astar_visited;
 		astar_visited.clear();
@@ -490,20 +491,18 @@ namespace pathfinding {
 		map<point, segment*> came_from;
 		// if 'to' has more than 2 neighbors or is a dead end, it is the target.
 		point long_target = to;
-		segment* target_segment = nullptr;
+		const segment* target_segment = nullptr;
 		if(unique_neighbors(to) <= 2 && !is_dead_end(to)) {
 			// not a dead end and not a source, so there is exactly one outward edge
-			int ind = 0;
-
 			//assert(short_segments.contains(graph[to][ind]));
-			long_target = (point)short_segments[graph[to][ind]].start;
-			target_segment = &short_segments[graph[to][ind]];
+			long_target = static_cast<point>(short_segments[graph[to][0]].start);
+			target_segment = &short_segments[graph[to][0]];
 		}
 
 		//assert(long_graph.contains(long_target)); // long target can be at the end - contains checks only for the beginning
 
 		typedef tuple<double, double, point> pq_item;
-		auto cmp = [](pq_item a, pq_item b) {
+		auto cmp = [](const pq_item& a, const pq_item& b) {
 			return get<0>(a) + get<1>(a) > get<0>(b) + get<1>(b);
 		};
 		priority_queue < pq_item, vector<pq_item>, decltype(cmp)> pq(cmp);
@@ -514,10 +513,10 @@ namespace pathfinding {
 				walk_forward(s, p);
 				double total_dist = 0;
 				for(segment* seg : p) {
-					came_from[(point)seg->end] = seg;
+					came_from[static_cast<point>(seg->end)] = seg;
 					total_dist += seg->length;
 				}
-				point end_point = (point)p[p.size()-1]->end;
+				auto end_point = static_cast<point>(p[p.size() - 1]->end);
 				assert(long_graph.contains(end_point));
 				astar_visited[(point)end_point] = true;
 				pq.emplace( total_dist, coord_dist(end_point, to), end_point );
@@ -534,13 +533,13 @@ namespace pathfinding {
 			pq.pop();
 			if (cur_point == long_target) {
 				if(target_segment != nullptr) {
-					vector<segment*>& final = long_segments[*target_segment];
-					for(int i = final.size()-1; i >= 0; i--) { // segment array is pre-reversed on purpose
+					const vector<segment*>& final = long_segments[*target_segment];
+					for(int i = static_cast<int>(final.size())-1; i >= 0; i--) { // segment array is pre-reversed on purpose
 						path.push_back(final[i]);
-						if((point)final[i]->end == to) break;
+						if(static_cast<point>(final[i]->end) == to) break;
 					}
 				}
-				reverse(path.begin(), path.end());
+				ranges::reverse(path);
 
 
 				while(came_from.contains(cur_point)) {
@@ -552,29 +551,30 @@ namespace pathfinding {
 					} else {
 						path.push_back(&cur_seg);
 					}
-					cur_point = (point)came_from[cur_point]->start;
+					cur_point = static_cast<point>(came_from[cur_point]->start);
 				}
 
 
 				for(segment* sp : first_steps) path.push_back(sp);
-				reverse(path.begin(), path.end());
+				ranges::reverse(path);
 
-				auto t2 = chrono::high_resolution_clock::now();
+				const auto t2 = chrono::high_resolution_clock::now();
 				(void)(VERBOSE && cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl);
 				return true;
 			}
 			astar_visited[cur_point] = true;
 
 			for (segment& seg : long_graph[cur_point]) {
-				point next_point = (point)seg.end;
-				double seg_length = seg.length / seg.max_speed;
+
+				auto next_point = static_cast<point>(seg.end);
+				const double seg_length = seg.length;
 				//cout << "    Segment: " << seg << endl;
 				//output_segment(out_file, seg, 'c');
-				double new_dist = cur_dist + seg_length;
+				const double new_dist = (cur_dist + seg_length) / seg.max_speed;
 				if (!astar_visited[next_point] && new_dist < dist[next_point]) {
 					dist[next_point] = new_dist;
 					came_from[next_point] = &seg;
-					pq.push({ new_dist, coord_dist(next_point, long_target), next_point });
+					pq.emplace( new_dist, coord_dist(next_point, long_target), next_point );
 				}
 			}
 		}
@@ -584,10 +584,10 @@ namespace pathfinding {
 	}
 
 	bool find_path(const building& from, const building& to, vector<segment*>& path) {
-		return find_path((point)from, (point)to, path);
+		return find_path(static_cast<point>(from), static_cast<point>(to), path);
 	}
 
-	void graph_init(Ways& roads) {
+	void graph_init(const Ways& roads) {
 		int seg_count = 0;
 		(void)(VERBOSE && cout << "BUILDING GRAPH" << endl);
 
@@ -617,7 +617,7 @@ namespace pathfinding {
 				segment seg(from, to, speed, 0.0, off_time);
 
 				graph[from].push_back(seg); // add the segment to the adjacency list for the starting point
-				output_segment(out_file, seg, seg.off_time ? 'k' : 'f');
+				output_segment(out_file, seg, seg.off_time > 0 ? 'k' : 'f');
 				seg_count++;
 
 				if (r["oneway"] == "yes" || r["oneway"] == "true" || r["oneway"] == "1" || (r.hasTag("junction") && r["junction"] == "roundabout")) {
@@ -633,7 +633,7 @@ namespace pathfinding {
 				}
 				segment newseg(to, from, speed, 0.0, off_time);
 				graph[to].push_back(newseg);
-				output_segment(out_file, newseg, newseg.off_time ? 'k' : 'r');
+				output_segment(out_file, newseg, newseg.off_time > 0 ? 'k' : 'r');
 				seg_count++;
 
 			}
@@ -649,8 +649,8 @@ namespace pathfinding {
 		(void)(VERBOSE && cout << "REMOVING DUPLICATES" << endl);
 		if(VERBOSE) t1 = chrono::high_resolution_clock::now();
 
-		sort(all_nodes.begin(), all_nodes.end());
-		all_nodes.erase(unique(all_nodes.begin(), all_nodes.end()), all_nodes.end()); // remove duplicates
+		ranges::sort(all_nodes);
+		all_nodes.erase(ranges::unique(all_nodes).begin(), all_nodes.end()); // remove duplicates
 
 		if(VERBOSE) t2 = chrono::high_resolution_clock::now();
 		(void)(VERBOSE && cout << "DONE" << endl);
@@ -666,7 +666,7 @@ namespace pathfinding {
 			for(segment& s : graph[p]) {
 				// if we have already processed the segment, there's no need to check it again
 				//if(short_segments.contains(s)) continue;
-				point from = (point)s.start;
+				const auto from = static_cast<point>(s.start);
 
 				vector<segment*> long_segment;
 				//long_segment.push_back(s);
@@ -677,22 +677,22 @@ namespace pathfinding {
 
 				// this loops through the edges until we find a crossing (point with at least 2 edges that are not our current point)
 				walk_forward(s, long_segment);
-				reverse(long_segment.begin(), long_segment.end());
+				ranges::reverse(long_segment);
 
-				for(segment* ss : long_segment) {
+				for(const segment* ss : long_segment) {
 					total_dist += ss->length;
 					total_time += ss->length / ss->max_speed;
 				}
-				double total_speed = total_dist / total_time;
+				const double total_speed = total_dist / total_time;
 
-				point to = (point)long_segment[0]->end; //last point
+				const auto to = static_cast<point>(long_segment[0]->end); //last point
 
 				// here our long segment is (from, to), and its composing short segments are stored in long_segment
 				segment l(from, to, total_speed, total_dist);
 				output_segment(out_file, l, 'l');
 				long_segments[l] = long_segment;
-				long_graph[(point)l.start].push_back(l);
-				for(segment* short_segment : long_segment) {
+				long_graph[static_cast<point>(l.start)].push_back(l);
+				for(const segment* short_segment : long_segment) {
 					//assert(short_segment.real);
 					//if(short_segments.find(s) == short_segments.end()) {
 					short_segments[*short_segment] = l;
@@ -713,8 +713,8 @@ namespace pathfinding {
 		if(VERBOSE) t1 = chrono::high_resolution_clock::now();
 
 		int comp = 1;
-		for(int i = 0; i < all_nodes.size(); i++) {
-			if(dfs(all_nodes[i], comp)) comp++;
+		for(const long all_node : all_nodes) {
+			if(dfs(all_node, comp)) comp++;
 		}
 
 		if(VERBOSE) t2 = chrono::high_resolution_clock::now();
@@ -728,7 +728,7 @@ namespace pathfinding {
 namespace traffic_sim {
 	using namespace pathfinding;
 
-	double closest_obst(car* c, double vision);
+	double closest_obst(const car* c, double vision);
 
 	struct car {
 		Coordinate position;
@@ -767,7 +767,7 @@ namespace traffic_sim {
 		}
 
 		Coordinate update_position() {
-			double ratio = segment_position / cur_segment->length;
+			const double ratio = segment_position / cur_segment->length;
 
 			position = Coordinate(lerp(cur_segment->start.x, cur_segment->end.x, ratio), lerp(cur_segment->start.y, cur_segment->end.y, ratio));
 			return position;
@@ -782,13 +782,13 @@ namespace traffic_sim {
 		void set_speed(double s) { // sets and clamps speed
 			cur_speed = min(min(max(s, 0.0), max_speed), cur_segment->max_speed);
 		}
-		double get_max_speed() {
+		[[nodiscard]] double get_max_speed() const {
 			return min(max_speed, cur_segment->max_speed);
 		}
-		double max_dist(double dt) { // calculate maximum distance reachable in dt (delta time)
-			double max_v = get_max_speed();
-			double base_dist = cur_speed * dt;
-			double max_point = (max_v - cur_speed) / accel;
+		[[nodiscard]] double max_dist(const double dt) const { // calculate maximum distance reachable in dt (delta time)
+			const double max_v = get_max_speed();
+			const double base_dist = cur_speed * dt;
+			const double max_point = (max_v - cur_speed) / accel;
 			/*
 			 * 13.8  ---------------------
 			 *      /|                   |
@@ -803,14 +803,14 @@ namespace traffic_sim {
 
 			 */
 
-			double s_1 = max_point < EPSILON ? 0.0 : min(max_point, dt) * max_v / max_point / 2.0;
+			const double s_1 = max_point < EPSILON ? 0.0 : min(max_point, dt) * max_v / max_point / 2.0;
 			//                 (1)   (                 2                )
 			return base_dist + s_1 + max(dt - max_point, 0.0) * max_v;
 		}
-		double min_dist(double dt) { // calculate minimum distance reachable in dt (delta time)
-			double min_point = min(cur_speed / brake, dt);
-			double dv = min_point * brake;
-			double top = (dv) * min_point / 2.0;
+		[[nodiscard]] double min_dist(const double dt) const { // calculate minimum distance reachable in dt (delta time)
+			const double min_point = min(cur_speed / brake, dt);
+			const double dv = min_point * brake;
+			const double top = (dv) * min_point / 2.0;
 
 			/*
 			 * cur_speed
@@ -831,16 +831,16 @@ namespace traffic_sim {
 		}
 
 
-		constexpr double area(double v1, double accel, double len) {
-			double v2 = v1 + accel * len;
+		static constexpr double area(const double v1, const double _accel, const double len) {
+			const double v2 = v1 + _accel * len;
 			return min(v1, v2) * len + len * abs(v2-v1) / 2.0;
 		}
 
-		void move_dist(double dist, double dt = -1.0) {
+		void move_dist(double dist, const double dt = -1.0) {
 			//if(dist < MIN_DIST) dist = 0.0;
 			if(obst > 0.0) dist = max(min(dist, obst - DEFAULT_CAR_RADIUS), 0.0);
 			if(dt > 0.0) { // dt being positive signals recalculaion of cur_speed
-				double mid = dist/dt;
+				const double mid = dist/dt;
 				set_speed(cur_speed + (mid-cur_speed) * 2.0); // linear extrapolation
 			}
 			if(cur_speed > EPSILON) segment_position += dist;
@@ -848,7 +848,7 @@ namespace traffic_sim {
 				segment_position -= cur_segment->length;
 
 
-				for (vector<car*>::iterator it = cur_segment->cars.begin(); it != cur_segment->cars.end(); it++)
+				for (auto it = cur_segment->cars.begin(); it != cur_segment->cars.end(); ++it)
 				{
 					if (*it == this) {
 						cur_segment->cars.erase(it);
@@ -857,13 +857,13 @@ namespace traffic_sim {
 				}
 				path.erase(path.begin());
 				//(void)(VERBOSE && cout << "segments left: " << path.size() << endl);
-				if(path.empty() || (point)path.front()->start == target_loc) {
+				if(path.empty() || static_cast<point>(path.front()->start) == target_loc) {
 					reset();
 					return;
 				}
 
 				// slow down for turns, formula: https://www.desmos.com/calculator/to2fkqowrh
-				double angle = cur_segment->angle(*path.front());
+				const double angle = cur_segment->angle(*path.front());
 				cur_speed *= abs(cos(angle / (get_max_speed() / cur_speed * 2.3)));
 
 				cur_segment = path.front();
@@ -871,7 +871,7 @@ namespace traffic_sim {
 
 				// setting next_segment for lane checking
 				if(next_segment == &short_segments[*cur_segment] || next_segment == nullptr) {
-					for(segment* s : path) {
+					for(const segment* s : path) {
 						if(short_segments[*s] != short_segments[*cur_segment]) {
 							next_segment = &short_segments[*s];
 							goto endif;
@@ -882,14 +882,14 @@ namespace traffic_sim {
 				endif:;
 			}
 		}
-		constexpr double calc_k(double obst, double v_max) {
+		[[nodiscard]] constexpr double calc_k(const double v_max) const {
 			// k is coefficient of similar triangles - negative values means that v(t) does not cross v_max
-			double common = brake * (-cur_speed * cur_speed - 2 * accel * obst);
+			const double common = brake * (-cur_speed * cur_speed - 2 * accel * obst);
 			return (v_max * v_max * (brake + accel) + common)
 			/ (2 * v_max * cur_speed * (brake + accel) - v_max * v_max * (brake - accel) + common);
 		}
 
-		constexpr double calc_tstop2(double obst) {
+		[[nodiscard]] constexpr double calc_tstop2() const {
 			// formula for t_stop2 when k < 0
 			return (-(brake + accel) * cur_speed + sqrt((cur_speed * cur_speed * brake) * (brake + accel) + 2*(accel+brake+obst) * (accel * brake)))
 				/ ((brake + accel) * accel);
@@ -924,9 +924,9 @@ namespace traffic_sim {
 				}
 				// formula for movement calculation: https://www.desmos.com/calculator/zlqnsvq0d1
 				// calculates the time at which the car should stop to minimize the time it takes to reach obst
-				double k = calc_k(v_max, obst);
+				double k = calc_k(v_max);
 
-				double t_stop = (v_max - cur_speed) / (accel * (1-k)); // negative t_stop means that the crossing is behind the x axis
+				double t_stop = (v_max - cur_speed) / (accel * (1-k)); // negative t_stop means that the crossing is behind the x-axis
 				if(t_stop <= 0) move_dist(min_d, dt); // t_stop
 				else if(k > 0){
 					double t_max1 = max(0.0, (v_max - cur_speed) / accel);
@@ -942,8 +942,7 @@ namespace traffic_sim {
 					// negative k: obst is too far to reach maximum speed before meeting
 					// negative k messes up the calculation for the other faces, so a different formula is needed
 					//t_stop = (2 * brake * obst - cur_speed * cur_speed) * (accel + brake) / (2 * cur_speed + )
-					double t_stop2 = calc_tstop2(obst);
-					if(t_stop2 > dt) move_dist(max_d, dt);
+					if(const double t_stop2 = calc_tstop2(); t_stop2 > dt) move_dist(max_d, dt);
 					else if(t_stop2 < 0) move_dist(min_d, dt);
 					else {
 						move_dist(area(cur_speed, accel, t_stop2), t_stop2);
@@ -959,9 +958,9 @@ namespace traffic_sim {
 
 
 	// returns the number of segments that can be reached by moving dist
-	int segments_ahead(car* c, double dist, const vector<segment*>& segments) {
+	int segments_ahead(const car* c, double dist, const vector<segment*>& segments) {
 		int r = 0;
-		segment* cur_seg = segments[r];
+		const segment* cur_seg = segments[r];
 		dist -= (cur_seg->length - c->segment_position);
 		while(dist > 0 && r < segments.size()-1) {
 			cur_seg = segments[++r];
@@ -970,9 +969,9 @@ namespace traffic_sim {
 		return r;
 	}
 
-	double closest_obst(car* c, double vision) {
+	double closest_obst(const car* c, const double vision) {
 		double min_dist = 1e20;
-		for(car* other : c->cur_segment->cars) { // special case for current segment - check if the cars are in front
+		for(const car* other : c->cur_segment->cars) { // special case for current segment - check if the cars are in front
 			// ignore different lanes
 			if(c->next_segment == nullptr || other->next_segment == nullptr) continue;
 			if(*(c->next_segment) != *(other->next_segment)) continue;
@@ -987,10 +986,10 @@ namespace traffic_sim {
 		double cur_dist = c->cur_segment->length - c->segment_position;
 
 		// segments_ahead returns how many segments are covered by vision
-		int seg_count = segments_ahead(c, vision, c->path);
+		const int seg_count = segments_ahead(c, vision, c->path);
 		for(int i = 1; i <= seg_count; i++) { // skip current segment
 			// check cars
-			for(car* other : c->path[i]->cars) {
+			for(const car* other : c->path[i]->cars) {
 				// ignore different lanes
 				if(c->next_segment == nullptr || other->next_segment == nullptr) continue;
 				if(*(c->next_segment) != *(other->next_segment)) continue;
@@ -1052,8 +1051,8 @@ namespace traffic_sim {
 
 		building* work = nullptr; // or any place that is visited regularly
 
-		person(string n, int a, bool cd, const building& h) {
-			name = n;
+		person(string n, const int a, const bool cd, const building& h) {
+			name = std::move(n);
 			age = a;
 			can_drive = cd;
 			home = &h;
@@ -1070,17 +1069,17 @@ namespace traffic_sim {
 		}
 	};
 
-	vector<person> people;
-	vector<building> workplaces;
+	inline vector<person> people;
+	inline vector<building> workplaces;
 
 	void people_init() {
 		(void)(VERBOSE && cout << "GENERATING PEOPLE" << endl);
-		auto t1 = chrono::high_resolution_clock::now();
+		const auto t1 = chrono::high_resolution_clock::now();
 
-		for(auto& rb : residential_buildings) {
-			for(const building& b : rb.second) {
+		for(auto& res_area : residential_buildings | views::values) {
+			for(const building& b : res_area) {
 				for(int i = 0; i < b.capacity; i++) {
-					int age = rng::random_int(0, 80);
+					const int age = rng::random_int(0, 80);
 					bool can_drive;
 					if(age < 18) can_drive = false;
 					else if(age < 50) can_drive = rng::random_chance(0.8);
@@ -1092,7 +1091,7 @@ namespace traffic_sim {
 			}
 		}
 
-		shuffle(people.begin(), people.end(), rng::mt_gen); // randomize ordering
+		ranges::shuffle(people, rng::mt_gen); // randomize ordering
 
 
 		auto t2 = chrono::high_resolution_clock::now();
@@ -1100,9 +1099,9 @@ namespace traffic_sim {
 		(void)(VERBOSE && cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl);
 
 	}
-	void workplaces_init(Features& workplace_features) {
+	void workplaces_init(const Features& workplace_features) {
 		(void)(VERBOSE && cout << "PARSING WORKPLACES" << endl);
-		auto t1 = chrono::high_resolution_clock::now();
+		const auto t1 = chrono::high_resolution_clock::now();
 
 		int count = 0;
 		for (const Feature& f : workplace_features)
@@ -1116,7 +1115,7 @@ namespace traffic_sim {
 			for(int i = 0; i < w.capacity; i++) {
 
 				while(true) {
-					person& p = people[rng::random_int(0, people.size()-1)];
+					person& p = people[rng::random_int(0, static_cast<int>(people.size()-1))];
 					if(p.work) continue;
 					if(p.age <= 6) break;
 					if(w.type == building::SCHOOL) {
@@ -1129,7 +1128,7 @@ namespace traffic_sim {
 
 			}
 		}
-		auto t2 = chrono::high_resolution_clock::now();
+		const auto t2 = chrono::high_resolution_clock::now();
 		(void)(VERBOSE && cout << "Total positions: " << count << endl);
 		(void)(VERBOSE && cout << "DONE" << endl);
 		(void)(VERBOSE && cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl);
@@ -1148,14 +1147,14 @@ namespace traffic_sim {
 		void call() const {
 			switch(t) {
 				case GO_TO_WORK: target->make_car(target->home, target->work); break;
+				case GO_TO_ENTERTAINMENT:
 				case GO_HOME: target->make_car(target->work, target->home); break;
-				case GO_TO_ENTERTAINMENT: target->make_car(target->work, target->home); break;
-				case GO_RANDOM: target->make_car(target->home, &workplaces[rng::random_int(0, workplaces.size()-1)]); break;
+				case GO_RANDOM: target->make_car(target->home, &workplaces[rng::random_int(0, static_cast<int>(workplaces.size()-1))]); break;
 			}
 
 			if(target->check_car()) target->p_car->cur_segment->cars.push_back(&(target->p_car.value()));
 		}
-		event(double time, type t, person* target) {
+		event(const double time, const type t, person* target) {
 			this->time = time;
 			this->t = t;
 			this->target = target;
@@ -1165,11 +1164,11 @@ namespace traffic_sim {
 		}
 	};
 
-	priority_queue<event, vector<event>, greater<event>> events;
+	inline priority_queue<event, vector<event>, greater<>> events;
 
 	void events_init() {
 		(void)(VERBOSE && cout << "CREATING EVENTS" << endl);
-		auto t1 = chrono::high_resolution_clock::now();
+		const auto t1 = chrono::high_resolution_clock::now();
 		for(person& p : people) {
 			if(!p.can_drive) continue;
 			if(!p.work) {
@@ -1201,12 +1200,12 @@ namespace traffic_sim {
 			//if(p.work) cout << "; work: " << (coord_from_point(p.work->location));
 			//cout << "; can drive: " << p.can_drive << endl;
 		}
-		auto t2 = chrono::high_resolution_clock::now();
+		const auto t2 = chrono::high_resolution_clock::now();
 		(void)(VERBOSE && cout << "Total events: " << events.size() << endl);
 		(void)(VERBOSE && cout << "DONE" << endl);
 		(void)(VERBOSE && cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl);
 	}
-	void sim_tick(double dt) {
+	void sim_tick(const double dt) {
 		cur_time += dt;
 		cout << "PROGRESS: " << cur_time << " / " << SIM_LENGTH << endl;
 		out_file << "t " << cur_time << endl;
