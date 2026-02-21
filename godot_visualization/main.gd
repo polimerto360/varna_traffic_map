@@ -1,7 +1,8 @@
 extends Node2D
 
 var EXE_PATH = "../build/traffic_map"
-var OUT_PATH = "../build/out.txt"
+var OUT_PATH = "/home/polimerto/CLionProjects/varna_traffic_map/cmake-build-debug/out.txt"
+#var OUT_PATH = "../build/out.txt"
 var ITERATIONS = 100
 var RUN_SIM = false
 

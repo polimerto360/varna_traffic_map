@@ -23,7 +23,7 @@ namespace config {
 
 
 	const double TIME_STEP = 0.1; // time step in seconds
-	const double SIM_LENGTH = 100.0; // how long to run the simulation
+	const double SIM_LENGTH = 86400.0; // how long to run the simulation
 	const double DEFAULT_BUILDING_HEIGHT = 5.0; // default building height in meters
 	// target workplaces is 150000
 	const double EMPLOYEE_DENSITY = 0.038; // people per cubic meter (adding 0.01 increases result by 56309)
@@ -43,7 +43,7 @@ namespace config {
 
 	const double DEFAULT_TRAFFIC_LIGHT_ON_TIME = 15.0; // on means green, off means red
 	const double DEFAULT_TRAFFIC_LIGHT_OFF_TIME = 45.0;
-	const int MAX_CARS = 1000; // total number of cars in the simulation
+	const int MAX_CARS = 1000000; // total number of cars in the simulation
 	const double EPSILON = 0.000000001;
 
 	const double RANDOM_EVENT_CHANCE = 0.2; // chance for an unemployed person to go outside
@@ -197,7 +197,10 @@ namespace traffic_sim
 				(
 					(end.x - start.x) * (other.end.x - other.start.x) + (end.y - start.y) * (other.end.y - other.start.y)
 				) /
-					(sqrt( (end.x - start.x) * (end.x - start.x) + (end.y - start.y) * (end.y - start.y) ) * sqrt( (other.end.x - other.start.x) * (other.end.x - other.start.x) + (other.end.y - other.start.y) * (other.end.y - other.start.y) ))
+				(
+					hypot(end.x - start.x, end.y - start.y) * hypot(other.end.x - other.start.x, other.end.y - other.start.y)
+				)
+
 			);
 		}
 
@@ -564,7 +567,7 @@ namespace pathfinding {
 
 			for (segment& seg : long_graph[cur_point]) {
 				point next_point = (point)seg.end;
-				double seg_length = seg.length;
+				double seg_length = seg.length / seg.max_speed;
 				//cout << "    Segment: " << seg << endl;
 				//output_segment(out_file, seg, 'c');
 				double new_dist = cur_dist + seg_length;
@@ -1170,6 +1173,7 @@ namespace traffic_sim {
 		for(person& p : people) {
 			if(!p.can_drive) continue;
 			if(!p.work) {
+				// random events
 				if (rng::random_chance(RANDOM_EVENT_CHANCE)) {
 					events.emplace(
 						rng::random_double(0, SIM_LENGTH),
@@ -1180,18 +1184,18 @@ namespace traffic_sim {
 				continue;
 			}
 			events.emplace(
-				//time_hms(8, 30+rng::normal_int(-30, 30), rng::random_double(-60, 60)),
-				time_hms(0, 1, rng::random_double(-60, 60)),
+				time_hms(8, 30+rng::normal_int(-30, 30), rng::random_double(-60, 60)), // going to work
+				//time_hms(0, 1, rng::random_double(-60, 60)),
 				//time_hms(0, 0, 0),
-						event::GO_TO_WORK,
-					&p
+				event::GO_TO_WORK,
+				&p
 			);
-			// events.emplace(
-			// 	time_hms(17, 30+rng::normal_int(-30, 30), rng::random_double(-60, 60)),
-			// 			//time_hms(17, 30+rng::normal_int(-30, 30), rng::random_double(-60, 60)),
-			// 			event::GO_HOME,
-			// 		&p
-			// );
+			events.emplace(
+				time_hms(17, 30+rng::normal_int(-30, 30), rng::random_double(-60, 60)),// going home
+				//time_hms(17, 30+rng::normal_int(-30, 30), rng::random_double(-60, 60)),
+				event::GO_HOME,
+				&p
+			);
 			if(events.size() > MAX_CARS) break;
 			//cout << "age " << p.age << " - home: " <<  (coord_from_point(p.home->location));
 			//if(p.work) cout << "; work: " << (coord_from_point(p.work->location));
