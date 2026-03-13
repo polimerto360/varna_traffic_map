@@ -19,38 +19,159 @@
 #include <ranges>
 
 namespace config {
-	inline bool VERBOSE = true;
+	using namespace std;
 
-	std::ofstream out_file("out.txt", std::ofstream::trunc | std::ofstream::out);
+	bool VERBOSE = false;
 
 
-	constexpr double TIME_STEP = 0.1; // time step in seconds
-	constexpr double SIM_LENGTH = 100.0; // how long to run the simulation
-	constexpr double DEFAULT_BUILDING_HEIGHT = 5.0; // default building height in meters
+
+	string GOL_PATH = "./bulgaria.gol"; // Path to the geographic object library file
+	string GOL_QUERY = "a[admin_level=5][name:en=Varna]"; // GOQL query for a single area, containing the target to be simulated
+	string WAYS_QUERY = "[highway=motorway,trunk,primary,secondary,tertiary,residential,road,track,motorway_link,trunk_link,primary_link,secondary_link,tertiary_link,unclassified,service]"; // GOQL query for the drivable roads
+	string RESIDENTIAL_BUILDINGS_QUERY = "a[building=residential,house,apartments,detached,terrace]"; // GOQL query for the buildings where people can live
+	string WORK_BUILDINGS_QUERY = "a[disused:shop=mall],a[building=office,industrial,school,kindergarten],a[shop],n[shop],n[amenity][amenity!=bicycle_parking,bicycle_repair_station,bicycle_rental,bicycle_wash,bus_station,compressed_air,charging_station,driver_training,grit_bin,motorcycle_parking,parking,parking_entrance,parking_space,taxi,weighbridge,atm,payment_terminal,baby_hatch,fountain,stage,studio,post_box,bbq,bench,check_in,dog_toilet,dressing_room,drinking_water,give_box,lounge,mailroom,parcel_locker,shelter,shower,telephone,toilets,water_point,watering_place,sanitary_dump_station,recycling,waste_basket,waste_disposal,baking_oven,clock,grave_yard,hunting_stand,kitchen,kneipp_water_cure,lounger,photo_booth,place_of_mourning,place_of_worship,public_bath,vending_machine,hydrant]"; // GOQL query for the places where people can work
+
+	string IN_PATH = ""; // Path to the input file, leave empty/unset if the input should be generated automatically (Command line argument will override this)
+	//string TRAFFIC_LIGHTS_CONFIG_PATH = ""; // Path to the traffic light configuration, leave unset if it should be generated randomly (Command line argument will override this)
+	string OUT_VISUALISATION_PATH = "out.txt";
+	string OUT_GENERATED_PATH = "gen.txt";
+
+
+	bool cmd_override_gol_path = false;
+	bool cmd_override_gol_query = false;
+	bool cmd_override_in_path = false;
+	bool cmd_override_out_path = false;
+	bool cmd_override_gen_path = false;
+
+	double TIME_STEP = 0.1; // time step in seconds
+	double SIM_LENGTH = 100.0; // how long to run the simulation
+	double DEFAULT_BUILDING_HEIGHT = 5.0; // default building height in meters
 
 	// target workplaces is 150000
-	constexpr double EMPLOYEE_DENSITY = 0.038; // people per cubic meter (adding 0.01 increases result by 56309)
-	constexpr int MIN_EMPLOYEES = 5; // minimum people per workplace (adds or subtracts 2861)
+	double EMPLOYEE_DENSITY = 0.038; // people per cubic meter (adding 0.01 increases result by 56309)
+	int MIN_EMPLOYEES = 5; // minimum people per workplace (adds or subtracts 2861)
 
 	// target residents is 350000
-	constexpr double RESIDENTIAL_DENSITY = 0.012;
-	constexpr int MIN_RESIDENTS = 3;
+	double RESIDENTIAL_DENSITY = 0.012;
+	int MIN_RESIDENTS = 3;
 
-	constexpr double ENTERTAINMENT_DENSITY = 0.024;
-	constexpr int MIN_VISITORS = 5;
+	double ENTERTAINMENT_DENSITY = 0.024;
+	int MIN_VISITORS = 5;
 	
-	constexpr double DEFAULT_ROAD_SPEED = 13.88; // default road speed in m/s
-	constexpr double DEFAULT_CAR_RADIUS = 6.0; // minimum allowed distance between cars in m
-	constexpr double DEFAULT_CAR_ACCELERATION = 3.5; // m/s^2
-	constexpr double DEFAULT_CAR_BRAKING = 7;
+	double DEFAULT_ROAD_SPEED = 13.88; // default road speed in m/s
+	double DEFAULT_CAR_RADIUS = 6.0; // minimum allowed distance between cars in m
+	double DEFAULT_CAR_ACCELERATION = 3.5; // m/s^2
+	double DEFAULT_CAR_BRAKING = 7;
+
+	double RATIO_KIDS = 0.19; // What part of the population is <= 18 years old
+	double RATIO_ADULTS_TO_65 = 0.57; // What part of the population is between 18 and 65
+	double RATIO_ADULTS_AFTER_65 = 0.24; // What part of the population is above 65
+
+	double RATIO_ADULTS_TO_65_CAN_DRIVE = 0.8; // What part of the population between 18 and 65 can drive
+	double RATIO_ADULTS_AFTER_65_CAN_DRIVE = 0.5; // What part of the population above 65 can drive
+
+	double DEFAULT_TRAFFIC_LIGHT_ON_TIME = 15.0; // on means green, off means red
+	double DEFAULT_TRAFFIC_LIGHT_OFF_TIME = 45.0;
+	int MAX_CARS = 1000; // total number of cars in the simulation
+
+	double EPSILON = 0.000000001;
+
+	double RANDOM_EVENT_CHANCE = 0.2; // chance for an unemployed person to go outside
+
+	bool EVALUATE_ROAD_CONNECTIONS = false; // if generating objects, whether to precompute each building's closest point on the road (slow)
+
+	constexpr unsigned hash_str(const char* s)
+	{
+		unsigned h = 37;
+		while (*s) {
+			h = (h * 54059) ^ (s[0] * 76963);
+			s++;
+		}
+		return h;
+	}
+
+	void parse_config(string config_path = "sim.config") {
+		ifstream cfg(config_path);
+		if(!cfg) {
+			cout << "Error opening config file." << endl;
+			return;
+		}
+
+		string line;
+		while(getline(cfg, line)) {
+			char quotes = 0;
+			bool key_read = false;
+			string key = "";
+			string value = "";
+			for(char i : line) {
+				if(quotes) {
+					if(i == quotes) break;
+					else value += i;
+					continue;
+				}
+				if(i == '#') break;
+				if(i == ' ' || i == '=') {
+					key_read = true;
+					continue;
+				}
+				if(i == '\'' || i == '"') {
+					quotes = i;
+					continue;
+				}
+				if(!key_read) key += i;
+				else value += i;
+			}
+
+			switch(hash_str(key.c_str())) {
+				case hash_str("GOL_PATH"): if(!cmd_override_gol_path) GOL_PATH = value; break;
+				case hash_str("GOL_QUERY"): if(!cmd_override_gol_query) GOL_QUERY = value; break;
+				case hash_str("WAYS_QUERY"): WAYS_QUERY = value; break;
+				case hash_str("RESIDENTIAL_BUILDINGS_QUERY"): RESIDENTIAL_BUILDINGS_QUERY = value; break;
+				case hash_str("WORK_BUILDINGS_QUERY"): WORK_BUILDINGS_QUERY = value; break;
+				case hash_str("IN_PATH"): if(!cmd_override_in_path) IN_PATH = value; break;
+				case hash_str("OUT_VISUALISATION_PATH"): if(!cmd_override_out_path) OUT_VISUALISATION_PATH = value; break;
+				case hash_str("OUT_GENERATED_PATH"): if(!cmd_override_gen_path) OUT_GENERATED_PATH = value; break;
+
+				case hash_str("TIME_STEP"): TIME_STEP = stod(value); if(TIME_STEP <= 0) TIME_STEP = 1.0; break;
+				case hash_str("SIM_LENGTH"): SIM_LENGTH = stod(value); if(SIM_LENGTH <= 0) SIM_LENGTH = 100.0; break;
+
+				case hash_str("DEFAULT_BUILDING_HEIGHT"): DEFAULT_BUILDING_HEIGHT = stod(value); if(DEFAULT_BUILDING_HEIGHT <= 0) DEFAULT_BUILDING_HEIGHT = 5.0; break;
+				case hash_str("EMPLOYEE_DENSITY"): EMPLOYEE_DENSITY = stod(value); if(EMPLOYEE_DENSITY <= 0) EMPLOYEE_DENSITY = 0.038; break;
+				case hash_str("MIN_EMPLOYEES"): MIN_EMPLOYEES = stoi(value); if(MIN_EMPLOYEES <= 0) MIN_EMPLOYEES = 5; break;
+				case hash_str("RESIDENTIAL_DENSITY"): RESIDENTIAL_DENSITY = stod(value); if(RESIDENTIAL_DENSITY <= 0) RESIDENTIAL_DENSITY = 0.012; break;
+				case hash_str("MIN_RESIDENTS") :MIN_RESIDENTS = stoi(value); if(MIN_RESIDENTS <= 0) MIN_RESIDENTS = 3; break;
+				case hash_str("ENTERTAINMENT_DENSITY"): ENTERTAINMENT_DENSITY = stod(value); if(ENTERTAINMENT_DENSITY <= 0) ENTERTAINMENT_DENSITY = 0.024; break;
+
+				case hash_str("DEFAULT_ROAD_SPEED"): DEFAULT_ROAD_SPEED = stod(value); if(DEFAULT_ROAD_SPEED <= 0) DEFAULT_ROAD_SPEED = 13.88; break;
+				case hash_str("DEFAULT_CAR_RADIUS"): DEFAULT_CAR_RADIUS = stod(value); if(DEFAULT_CAR_RADIUS <= 0) DEFAULT_CAR_RADIUS = 6.0; break;
+				case hash_str("DEFAULT_CAR_ACCELERATION"): DEFAULT_CAR_ACCELERATION = stod(value); if(DEFAULT_CAR_ACCELERATION <= 0) DEFAULT_CAR_ACCELERATION = 3.5; break;
+				case hash_str("DEFAULT_CAR_BRAKING"): DEFAULT_CAR_BRAKING = stod(value); if(DEFAULT_CAR_BRAKING <= 0) DEFAULT_CAR_BRAKING = 7.0; break;
+
+				case hash_str("RATIO_KIDS"): RATIO_KIDS = stod(value); if(RATIO_KIDS <= 0) RATIO_KIDS = 0.19; break;
+				case hash_str("RATIO_ADULTS_TO_65"): RATIO_ADULTS_TO_65 = stod(value); if(RATIO_ADULTS_TO_65 <= 0) RATIO_ADULTS_TO_65 = 0.57; break;
+				case hash_str("RATIO_ADULTS_AFTER_65"): RATIO_ADULTS_AFTER_65 = stod(value); if(RATIO_ADULTS_AFTER_65 <= 0) RATIO_ADULTS_AFTER_65 = 0.24; break;
+
+				case hash_str("RATIO_ADULTS_TO_65_CAN_DRIVE"): RATIO_ADULTS_TO_65_CAN_DRIVE = stod(value); if(RATIO_ADULTS_TO_65_CAN_DRIVE <= 0) RATIO_ADULTS_TO_65_CAN_DRIVE = 0.8; break;
+				case hash_str("RATIO_ADULTS_AFTER_65_CAN_DRIVE"): RATIO_ADULTS_AFTER_65_CAN_DRIVE = stod(value); if(RATIO_ADULTS_AFTER_65_CAN_DRIVE <= 0) RATIO_ADULTS_AFTER_65_CAN_DRIVE = 0.5; break;
+
+				case hash_str("DEFAULT_TRAFFIC_LIGHT_ON_TIME"): DEFAULT_TRAFFIC_LIGHT_ON_TIME = stod(value); if(DEFAULT_TRAFFIC_LIGHT_ON_TIME <= 0) DEFAULT_TRAFFIC_LIGHT_ON_TIME = 15.0; break;
+				case hash_str("DEFAULT_TRAFFIC_LIGHT_OFF_TIME"): DEFAULT_TRAFFIC_LIGHT_OFF_TIME = stod(value); if(DEFAULT_TRAFFIC_LIGHT_OFF_TIME <= 0) DEFAULT_TRAFFIC_LIGHT_OFF_TIME = 45.0; break;
+				case hash_str("MAX_CARS"): MAX_CARS = stoi(value); if(MAX_CARS <= 0) MAX_CARS = 1000.0; break;
+				case hash_str("RANDOM_EVENT_CHANCE"): RANDOM_EVENT_CHANCE = stod(value); if(RANDOM_EVENT_CHANCE <= 0) RANDOM_EVENT_CHANCE = 0.2; break;
+
+				case hash_str("VERBOSE"): VERBOSE = (VERBOSE || value == "true" || value == "1"); break;
+				case hash_str("EVALUATE_ROAD_CONNECTIONS"): EVALUATE_ROAD_CONNECTIONS = (value == "true" || value == "1"); break;
+			}
+
+			double ratio_sum = RATIO_KIDS + RATIO_ADULTS_AFTER_65 + RATIO_ADULTS_TO_65;
+			RATIO_KIDS /= ratio_sum;
+			RATIO_ADULTS_AFTER_65 /= ratio_sum;
+			RATIO_ADULTS_TO_65 /= ratio_sum;
 
 
-	constexpr double DEFAULT_TRAFFIC_LIGHT_ON_TIME = 15.0; // on means green, off means red
-	constexpr double DEFAULT_TRAFFIC_LIGHT_OFF_TIME = 45.0;
-	constexpr int MAX_CARS = 1000; // total number of cars in the simulation
-	constexpr double EPSILON = 0.000000001;
+		}
 
-	constexpr double RANDOM_EVENT_CHANCE = 0.2; // chance for an unemployed person to go outside
+	}
 }
 
 namespace traffic_sim
@@ -62,6 +183,33 @@ namespace traffic_sim
 	typedef int64_t point; // hash for node coordinates
 
 	inline double cur_time = 0; //seconds (0 - 86400)
+
+	bool using_input = false;
+	ifstream in_file;
+
+	ofstream out_file;
+	bool using_gen = false;
+	ofstream gen_file;
+
+	void init_io_files() {
+		if(IN_PATH != "") {
+			in_file = ifstream(IN_PATH);
+			if(in_file) using_input = true;
+			else cout << "Error reading input file." << endl;
+		}
+		out_file = ofstream(OUT_VISUALISATION_PATH, ofstream::trunc | ofstream::out);
+
+		if(!out_file) {
+			cout << "Error opening output file." << endl;
+			return;
+		}
+
+		if(OUT_GENERATED_PATH != "") {
+			gen_file = ofstream(OUT_GENERATED_PATH, ofstream::trunc | ofstream::out);
+			if(gen_file) using_gen = true;
+			else cout << "Error opening generated output file." << endl;
+		}
+	}
 
 	constexpr double time_hms(const int hours, const int minutes, const double seconds) {
 		return hours * 3600 + minutes * 60 + seconds;
@@ -280,10 +428,12 @@ namespace traffic_sim
 	// }
 
 	void output_segment(ostream& out, const segment& seg, char type) {
+		if(out)
 		out << "seg " << seg.start.x << " " << seg.start.y << " " << seg.end.x << " " << seg.end.y << " " << type << endl;
 	}
 
 	void output_traffic_light(ostream& out, const segment& seg) {
+		if(out)
 		out << "trl " << seg.start.x << " " << seg.start.y << " " << seg.end.x << " " << seg.end.y << " " << (seg.is_red() ? 'r' : 'g') << endl;
 	}
 
@@ -317,14 +467,16 @@ namespace traffic_sim
 			ENTERTAINMENT
 		};
 		string name;
+		int index = -1;
 		building_type type;
 		Coordinate location;
 		mutable point road_connection = 0;
-		int capacity; // number of residents/people/employees
+		int capacity; // max number of residents/people/employees
 		int cur_employees = 0;
 
-		building(const Feature& loc, building_type t, double people_density = 0.0) {
+		building(const Feature& loc, building_type t, double people_density = 0.0, int ind = -1) {
 			assert(is_init);
+			index = ind;
 			name = loc["name"].storedString();
 			type = t;
 
@@ -373,8 +525,15 @@ namespace traffic_sim
 
 	};
 
+	static ostream& operator<<(ostream& out, const building& b)
+	{
+		out << "b " << b.type << ' ' << (point)b.location  << ' ' << (EVALUATE_ROAD_CONNECTIONS ? (point)b : b.road_connection) << ' ' << b.capacity << ' ' << b.name;
+		//b(building), type, location, road connection, capacity, name
+		return out;
+	}
 
-	inline map<int64_t, vector<building>> residential_buildings; // map of residential area id to buildings in that area; initialized in main
+
+	inline unordered_map<int64_t, vector<building>> residential_buildings; // map of residential area id to buildings in that area; initialized in main
 }
 template<>
 struct std::hash<traffic_sim::segment> {
@@ -392,15 +551,15 @@ namespace pathfinding {
 	using namespace geodesk;
 	using namespace config;
 
-	inline map<point, vector<segment>> graph; // adjacency list representation of the road network graph
-	inline map<point, bool> visited;
-	inline map<point, double> dist;
+	inline unordered_map<point, vector<segment>> graph; // adjacency list representation of the road network graph
+	inline unordered_map<point, bool> visited;
+	inline unordered_map<point, double> dist;
 	//map<point, int> connected_to; // how many points are connected with one way inward connection to each point
-	inline map<point, int> component;
-	inline map<point, vector<point>> weak_connections; // connections from another point to the key point
+	inline unordered_map<point, int> component;
+	inline unordered_map<point, vector<point>> weak_connections; // connections from another point to the key point
 	inline unordered_map<segment, vector<segment*>> long_segments; // key - long segment; value - short segments that compose it
 	inline unordered_map<segment, segment> short_segments; // key - short segment; value - long segment it is a part of
-	inline map<point, vector<segment>> long_graph; // adjacency list for the long segments
+	inline unordered_map<point, vector<segment>> long_graph; // adjacency list for the long segments
 	//ifstream in_file("in.txt");
 
 
@@ -488,7 +647,7 @@ namespace pathfinding {
 		for (point p : all_nodes) dist[p] = 1e20;
 		dist[from] = 0.0;
 		astar_visited[from] = true;
-		map<point, segment*> came_from;
+		unordered_map<point, segment*> came_from;
 		// if 'to' has more than 2 neighbors or is a dead end, it is the target.
 		point long_target = to;
 		const segment* target_segment = nullptr;
@@ -1043,19 +1202,21 @@ namespace traffic_sim {
 	//deque<car> cars; // cars will be stored in person
 
 	struct person {
-		string name;
+		//string name;
 		int age;
+		int b_ind = -1; // index of building in the buildings vector (used for deserialization)
+		int w_ind = -1; // index of workplace in the workplaces vector (used for deserialization)
 		bool can_drive;
 		const building* home;
 		optional<car> p_car;
 
 		building* work = nullptr; // or any place that is visited regularly
 
-		person(string n, const int a, const bool cd, const building& h) {
-			name = std::move(n);
+		person(const int a, const bool cd, const building& h) {
 			age = a;
 			can_drive = cd;
 			home = &h;
+			b_ind = h.index;
 		}
 		bool check_car() { // returns whether the car exists
 			if(p_car && p_car->should_reset) {
@@ -1067,7 +1228,18 @@ namespace traffic_sim {
 		void make_car(const building* from, const building* to, double max_speed = DEFAULT_ROAD_SPEED) {
 			p_car = car(from, to, this, max_speed);
 		}
+		void set_work(building& w) {
+			work = &w;
+			w_ind = w.index;
+		}
 	};
+
+	static ostream& operator<<(ostream& out, const person& p)
+	{
+		out << "p " << p.age << ' ' << p.can_drive << ' ' << p.b_ind << ' ' << p.w_ind;
+		//out << Mercator::latFromY(coord.y) << " " << Mercator::lonFromX(coord.x);
+		return out;
+	}
 
 	inline vector<person> people;
 	inline vector<building> workplaces;
@@ -1085,7 +1257,7 @@ namespace traffic_sim {
 					else if(age < 50) can_drive = rng::random_chance(0.8);
 					else can_drive = rng::random_chance(0.5);
 
-					person p("", age, can_drive, b);
+					person p(age, can_drive, b);
 					people.push_back(p);
 				}
 			}
@@ -1103,11 +1275,12 @@ namespace traffic_sim {
 		(void)(VERBOSE && cout << "PARSING WORKPLACES" << endl);
 		const auto t1 = chrono::high_resolution_clock::now();
 
-		int count = 0;
+		int count = 0, ind = 0;
 		for (const Feature& f : workplace_features)
 		{
-			workplaces.emplace_back(f, (f["building"] == "school") ? building::SCHOOL : building::WORKPLACE);
-			cout << "Workplace: " << workplaces.back().name << ", Capacity: " << workplaces.back().capacity << ", Location: " << workplaces.back().location << endl;
+			workplaces.emplace_back(f, (f["building"] == "school") ? building::SCHOOL : building::WORKPLACE, 0.0, ind++);
+			//cout << "Workplace: " << workplaces.back().name << ", Capacity: " << workplaces.back().capacity << ", Location: " << workplaces.back().location << endl;
+			if(using_gen) gen_file << workplaces.back() << endl;
 			count += workplaces.back().capacity;
 		}
 
@@ -1119,9 +1292,9 @@ namespace traffic_sim {
 					if(p.work) continue;
 					if(p.age <= 6) break;
 					if(w.type == building::SCHOOL) {
-						if(p.age <= 18 || rng::random_chance(0.1)) {p.work = &w; break;}
+						if(p.age <= 18 || rng::random_chance(0.1)) {p.set_work(w); break;}
 					} else {
-						if(p.age >= 18 && p.age <= 63) {p.work = &w; break;}
+						if(p.age >= 18 && p.age <= 63) {p.set_work(w); break;}
 					}
 
 				}

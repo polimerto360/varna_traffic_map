@@ -1,7 +1,7 @@
 extends Node2D
 
 var EXE_PATH = "../build/traffic_map"
-var OUT_PATH = "/home/polimerto/CLionProjects/varna_traffic_map/cmake-build-debug/out.txt"
+var OUT_PATH = "/home/polimerto/Desktop/Coding/varna_traffic_map/build/out.txt"
 #var OUT_PATH = "../build/out.txt"
 var ITERATIONS = 100
 var RUN_SIM = false
@@ -44,12 +44,10 @@ func _ready() -> void:
 				l.z_index = 0
 			if(args[5] == "k"): 
 				l.gradient = k_gr
-				l.z_index = 99
 			if(args[5] == "c"): l.gradient = c_gr
 			if(args[5] == "l"): l.gradient = l_gr
 			if(args[5] == "s"): 
 				l.gradient = s_gr
-				l.z_index = 100
 			else:
 				l.default_color = Color.from_hsv(ord(args[5]) / 20.0, 1, 1)
 			add_child(l)
@@ -91,10 +89,10 @@ func _draw():
 	time = snapped(time, step)
 	if(cars.has(time)):
 		for car in cars[time]:
-			draw_circle(car, 5, Color.CORAL, true)
+			draw_circle(car, 5, Color.BROWN, true)
 	if(traffic_lights.has(time)):
 		for trl in traffic_lights[time]:
-			draw_line(trl[0], trl[1], Color.LIME_GREEN if trl[2] == 'g' else Color.RED)
+			draw_line(trl[0], trl[1], Color.LIME_GREEN if trl[2] == 'g' else Color.RED, 2)
 	
 
 # Called every frame. 'delta' is the elapsed time since the previous frame.
