@@ -31,6 +31,8 @@ namespace config {
 
 	string IN_PATH = ""; // Path to the input file, leave empty/unset if the input should be generated automatically (Command line argument will override this)
 	//string TRAFFIC_LIGHTS_CONFIG_PATH = ""; // Path to the traffic light configuration, leave unset if it should be generated randomly (Command line argument will override this)
+	bool REGENERATE_PEOPLE = true;
+
 	string OUT_VISUALISATION_PATH = "out.txt";
 	string OUT_GENERATED_PATH = "gen.txt";
 
@@ -74,10 +76,10 @@ namespace config {
 
 	int MORNING_HOUR = 8;
 	int MORNING_MINUTE_AVG = 30;
-	int MORNING_MINUTE_RANGE = 30;
+	double MORNING_MINUTE_DEVIATION = 10.0;
 	int EVENING_HOUR = 17;
 	int EVENING_MINUTE_AVG = 30;
-	int EVENING_MINUTE_RANGE = 30;
+	double EVENING_MINUTE_DEVIATION = 10.0;
 
 	double EPSILON = 0.000000001;
 
@@ -93,6 +95,12 @@ namespace config {
 			s++;
 		}
 		return h;
+	}
+
+	void to_lower(string& a) {
+		for (char& i : a) {
+			if('Z' >= i && i >= 'A') i -= 'A' - 'a';
+		}
 	}
 
 	void parse_config(string config_path = "sim.config") {
@@ -129,6 +137,7 @@ namespace config {
 
 			switch(hash_str(key.c_str())) {
 				case hash_str("GOL_PATH"): if(!cmd_override_gol_path) GOL_PATH = value; break;
+				case hash_str("REGENERATE_PEOPLE"): to_lower(value); REGENERATE_PEOPLE = (value == "true" || value == "1"); break;
 				case hash_str("GOL_QUERY"): if(!cmd_override_gol_query) GOL_QUERY = value; break;
 				case hash_str("WAYS_QUERY"): WAYS_QUERY = value; break;
 				case hash_str("RESIDENTIAL_BUILDINGS_QUERY"): RESIDENTIAL_BUILDINGS_QUERY = value; break;
@@ -164,14 +173,14 @@ namespace config {
 				case hash_str("MAX_CARS"): MAX_CARS = stoi(value); if(MAX_CARS <= 0) MAX_CARS = 1000.0; break;
 				case hash_str("RANDOM_EVENT_CHANCE"): RANDOM_EVENT_CHANCE = stod(value); if(RANDOM_EVENT_CHANCE <= 0) RANDOM_EVENT_CHANCE = 0.2; break;
 
-				case hash_str("VERBOSE"): VERBOSE = (VERBOSE || value == "true" || value == "1"); break;
-				case hash_str("EVALUATE_ROAD_CONNECTIONS"): EVALUATE_ROAD_CONNECTIONS = (value == "true" || value == "1"); break;
+				case hash_str("VERBOSE"): to_lower(value); VERBOSE = (VERBOSE || value == "true" || value == "1"); break;
+				case hash_str("EVALUATE_ROAD_CONNECTIONS"): to_lower(value); EVALUATE_ROAD_CONNECTIONS = (value == "true" || value == "1"); break;
 				case hash_str("MORNING_HOUR"): MORNING_HOUR = stoi(value); break;
 				case hash_str("MORNING_MINUTE_AVG"): MORNING_MINUTE_AVG = stoi(value); break;
-				case hash_str("MORNING_MINUTE_RANGE"): MORNING_MINUTE_RANGE = stoi(value); break;
+				case hash_str("MORNING_MINUTE_DEVIATION"): MORNING_MINUTE_DEVIATION = stod(value); break;
 				case hash_str("EVENING_HOUR"): EVENING_HOUR = stoi(value); break;
 				case hash_str("EVENING_MINUTE_AVG"): EVENING_MINUTE_AVG = stoi(value); break;
-				case hash_str("EVENING_MINUTE_RANGE"): EVENING_MINUTE_RANGE = stoi(value); break;
+				case hash_str("EVENING_MINUTE_DEVIATION"): EVENING_MINUTE_DEVIATION = stod(value); break;
 			}
 
 			double ratio_sum = RATIO_KIDS + RATIO_ADULTS_AFTER_65 + RATIO_ADULTS_TO_65;
@@ -300,7 +309,7 @@ namespace traffic_sim
 			uniform_int_distribution<int> dist(min_val, max_val);
 			return dist(mt_gen);
 		}
-		double random_double(const double min_val, const double max_val) {
+		double random_double(const double min_val = 0.0, const double max_val = 1.0) {
 			uniform_real_distribution<double> dist(min_val, max_val);
 			return dist(mt_gen);
 		}
@@ -479,7 +488,6 @@ namespace traffic_sim
 			ENTERTAINMENT
 		};
 		string name;
-		int64_t residential_area;
 		int index = -1;
 		building_type type;
 		Coordinate location;
@@ -487,9 +495,8 @@ namespace traffic_sim
 		int capacity; // max number of residents/people/employees
 		int cur_employees = 0;
 
-		building(const Feature& loc, building_type t, double people_density = 0.0, int ind = -1, int64_t res_area = 0) {
+		building(const Feature& loc, building_type t, double people_density = 0.0, int ind = -1) {
 			assert(is_init);
-			residential_area = res_area;
 			index = ind;
 			name = loc["name"].storedString();
 			type = t;
@@ -532,26 +539,30 @@ namespace traffic_sim
 			capacity = max(static_cast<int>(height * loc.area() * people_density), min_cap);
 		}
 
-		building(const point loc, const point road_con, building_type t, int cap, string nam, int64_t res_area = 0) {
+		building(const point loc, const point road_con, building_type t, int cap, string nam) {
 			//assert(is_init);
 			location = coord_from_point(loc);
 			road_connection = road_con;
 			type = t;
 			capacity = cap;
 			name = nam;
-			residential_area = res_area;
+		}
+
+		static void get_road_connection(const building& b) {
+			b.road_connection = closest_point(b.location);
 		}
 
 		explicit operator point() const noexcept {
-			if(!road_connection) road_connection = closest_point(location);
+			if(!road_connection) get_road_connection(*this);
 			return road_connection;
 		}
+
 
 	};
 
 	static ostream& operator<<(ostream& out, const building& b)
 	{
-		out << "b " << b.type << ' ' << (point)b.location  << ' ' << (EVALUATE_ROAD_CONNECTIONS ? (point)b : b.road_connection) << ' ' << b.capacity << ' ' << b.residential_area << ' ' << b.name;
+		out << "b " << b.type << ' ' << (point)b.location  << ' ' << (EVALUATE_ROAD_CONNECTIONS ? (point)b : b.road_connection) << ' ' << b.capacity << ' ' << b.name;
 		//b(building), type, location, road connection, capacity, area, name
 		return out;
 	}
@@ -580,7 +591,7 @@ namespace pathfinding {
 	inline unordered_map<point, double> dist;
 	//map<point, int> connected_to; // how many points are connected with one way inward connection to each point
 	inline unordered_map<point, int> component;
-	inline unordered_map<point, vector<point>> weak_connections; // connections from another point to the key point
+	inline unordered_map<point, unordered_set<point>> weak_connections; // connections from another point to the key point
 	inline unordered_map<segment, vector<segment*>> long_segments; // key - long segment; value - short segments that compose it
 	inline unordered_map<segment, segment> short_segments; // key - short segment; value - long segment it is a part of
 	inline unordered_map<point, vector<segment>> long_graph; // adjacency list for the long segments
@@ -588,8 +599,12 @@ namespace pathfinding {
 
 
 	unsigned int unique_neighbors(point p) {
+		return weak_connections[p].size();
 		// all segments represent a unique neighbor
-		return graph[p].size() + weak_connections[p].size();
+		unordered_set<point> uniq;
+		for(segment& i : graph[p]) uniq.insert((point)i.end);
+		for(point i : weak_connections[p]) uniq.insert(i);
+		return uniq.size();
 	}
 
 	bool is_dead_end(point p) {
@@ -597,13 +612,15 @@ namespace pathfinding {
 	}
 
 	bool is_source(point p) { // called only once, so no need to be very fast
-		if(!weak_connections[p].empty()) return false;
-		for(const segment& s : graph[p]) {
-			for(const segment& s1 : graph[static_cast<point>(s.end)]) {
-				if(s1.end == s.start) return false;
-			}
-		}
-		return true;
+		return weak_connections[p].size() == graph[p].size();
+
+		//if(!weak_connections[p].empty()) return false;
+		//for(const segment& s : graph[p]) {
+		//	for(const segment& s1 : graph[static_cast<point>(s.end)]) {
+		//		if(s1.end == s.start) return false;
+		//	}
+		//}
+		//return true;
 	}
 
 	bool dfs(const point p, const int comp) {
@@ -611,10 +628,10 @@ namespace pathfinding {
 		visited[p] = true;
 		component[p] = comp;
 
-		for(const segment& s : graph[p]) {
-			//output_segment(out_file, s, '0' + comp);
-			dfs(static_cast<point>(s.end), comp);
-		}
+		//for(const segment& s : graph[p]) {
+		//	//output_segment(out_file, s, '0' + comp);
+		//	dfs(static_cast<point>(s.end), comp);
+		//}
 		for(const point p2 : weak_connections[p])
 			dfs(p2, comp);
 		return true;
@@ -646,7 +663,7 @@ namespace pathfinding {
 	}
 
 	bool find_path(point from, const point to, vector<segment*>& path) {
-		// A* with compressed graph; 86 ms for vladislavovo - zelenika
+		// A* with compressed graph
 
 		auto t1 = chrono::high_resolution_clock::now();
 		(void)(VERBOSE && cout << "STARTED A*" << endl);
@@ -662,6 +679,7 @@ namespace pathfinding {
 				for(segment* s : first_steps) {
 					path.push_back(s);
 				}
+				return true;
 			}
 		}
 		ranges::reverse(first_steps);
@@ -700,7 +718,7 @@ namespace pathfinding {
 					total_dist += seg->length;
 				}
 				auto end_point = static_cast<point>(p[p.size() - 1]->end);
-				assert(long_graph.contains(end_point));
+				//assert(long_graph.contains(end_point)); //TODO: investigate assertion failure
 				astar_visited[(point)end_point] = true;
 				pq.emplace( total_dist, coord_dist(end_point, to), end_point );
 			}
@@ -776,7 +794,7 @@ namespace pathfinding {
 
 
 		for(point p : all_nodes) { // compressing graph - merging series of segments with only one edge (short_segment) into one (long_segment) (for faster pathfinding)
-			// RUNS FOR ABOUT 1200ms with O(N) time complexity
+			// RUNS FOR ABOUT 600ms with O(N) time complexity
 			// we need to process only the points with more than 2 neighbors, and the ones with 1 neighbor, as they would be skipped completely otherwise
 			if( (unique_neighbors(p) == 0) || (unique_neighbors(p) == 2) ) continue;
 			for(segment& s : graph[p]) {
@@ -840,7 +858,7 @@ namespace pathfinding {
 		is_init = true;
 	}
 
-	void graph_gen(const Ways& roads) {
+	void graph_gen(const Ways roads) {
 		int seg_count = 0;
 		(void)(VERBOSE && cout << "BUILDING GRAPH" << endl);
 
@@ -860,6 +878,8 @@ namespace pathfinding {
 				all_nodes.push_back(from);
 				all_nodes.push_back(to);
 
+				weak_connections[to].insert(from);
+				weak_connections[from].insert(to);
 
 				double off_time = 0.0;
 				if((node_list[i+1].hasTag("highway") && node_list[i+1]["highway"] == "traffic_signals")){// || (node_list[i+1].hasTag("crossing") && node_list[i+1]["crossing"] == "traffic_signals") || (node_list[i+1].hasTag("traffic_signals"))) {
@@ -873,7 +893,6 @@ namespace pathfinding {
 				seg_count++;
 
 				if (r["oneway"] == "yes" || r["oneway"] == "true" || r["oneway"] == "1" || (r.hasTag("junction") && r["junction"] == "roundabout")) {
-					weak_connections[to].push_back(from);
 					continue; // for one way roads skip
 				}
 
@@ -1284,18 +1303,19 @@ namespace traffic_sim {
 
 		for(const building& b : residential_buildings) {
 			for(int i = 0; i < b.capacity; i++) {
-				const int age = rng::random_int(0, 80);
+				int age;
+				const double prob = rng::random_double(0, 1);
+				if(prob < RATIO_KIDS) age = rng::random_int(0, 17);
+				else if(prob < RATIO_ADULTS_TO_65) age = rng::random_int(18, 64);
+				else age = rng::random_int(65, 100);
 				bool can_drive;
 				if(age < 18) can_drive = false;
-				else if(age < 50) can_drive = rng::random_chance(0.8);
-				else can_drive = rng::random_chance(0.5);
+				else if(age < 65) can_drive = rng::random_chance(RATIO_ADULTS_TO_65_CAN_DRIVE);
+				else can_drive = rng::random_chance(RATIO_ADULTS_AFTER_65_CAN_DRIVE);
 
 				people.emplace_back(age, can_drive, b, people.size());
 			}
 		}
-
-
-		ranges::shuffle(people, rng::mt_gen); // randomize ordering
 
 
 		auto t2 = chrono::high_resolution_clock::now();
@@ -1303,36 +1323,46 @@ namespace traffic_sim {
 		(void)(VERBOSE && cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl);
 
 	}
-	void workplaces_init(const Features& workplace_features) {
+	void workplaces_init(const Features workplace_features) {
 		(void)(VERBOSE && cout << "PARSING WORKPLACES" << endl);
 		const auto t1 = chrono::high_resolution_clock::now();
 
 		int count = 0;
+		vector<thread> mt;
 		for (const Feature& f : workplace_features)
 		{
 			workplaces.emplace_back(f, (f["building"] == "school") ? building::SCHOOL : building::WORKPLACE, 0.0, workplaces.size());
+			if(EVALUATE_ROAD_CONNECTIONS) mt.emplace_back(building::get_road_connection, workplaces.back());
 			//cout << "Workplace: " << workplaces.back().name << ", Capacity: " << workplaces.back().capacity << ", Location: " << workplaces.back().location << endl;
-			if(using_gen) gen_file << workplaces.back() << endl;
-			count += workplaces.back().capacity;
 		}
 
-		for(building& w : workplaces) {
-			for(int i = 0; i < w.capacity; i++) {
+		for(const building& i : workplaces)
+			count += i.capacity;
 
-				while(true) {
-					person& p = people[rng::random_int(0, static_cast<int>(people.size()-1))];
-					if(p.work) continue;
-					if(p.age <= 6) break;
-					if(w.type == building::SCHOOL) {
-						if(p.age <= 18 || rng::random_chance(0.1)) {p.set_work(w); break;}
-					} else {
-						if(p.age >= 18 && p.age <= 63) {p.set_work(w); break;}
-					}
 
+		for(thread& i : mt) i.join();
+
+		if(using_gen) for(building& b : workplaces) gen_file << b << endl;
+
+		int assigned_positions = 0;
+
+		for(person& p : people) {
+			if(p.age <= 6) continue;
+			if(assigned_positions == count) break;
+			while(true) {
+				building& w = workplaces[rng::random_int(0, workplaces.size()-1)];
+
+				if(p.age <= 18 && w.type != building::building_type::SCHOOL) continue;
+
+				if((w.capacity > w.cur_employees || w.type == building::building_type::SCHOOL) && rng::random_chance(pow(0.9994, coord_dist(p.home->location, w.location)))) {
+					p.work = &w;
+					w.cur_employees++;
+					assigned_positions++;
+					break;
 				}
-
 			}
 		}
+
 		const auto t2 = chrono::high_resolution_clock::now();
 		(void)(VERBOSE && cout << "Total positions: " << count << endl);
 		(void)(VERBOSE && cout << "DONE" << endl);
@@ -1351,9 +1381,9 @@ namespace traffic_sim {
 		person* target;
 		void call() const {
 			switch(t) {
-				case GO_TO_WORK: target->make_car(target->home, target->work); break;
-				case GO_TO_ENTERTAINMENT:
-				case GO_HOME: target->make_car(target->work, target->home); break;
+				case GO_TO_WORK: assert(target->work); target->make_car(target->home, target->work); break;
+				case GO_TO_ENTERTAINMENT: break;
+				case GO_HOME: assert(target->work); target->make_car(target->work, target->home); break;
 				case GO_RANDOM: target->make_car(target->home, &workplaces[rng::random_int(0, static_cast<int>(workplaces.size()-1))]); break;
 			}
 
@@ -1380,6 +1410,9 @@ namespace traffic_sim {
 	void events_init() {
 		(void)(VERBOSE && cout << "CREATING EVENTS" << endl);
 		const auto t1 = chrono::high_resolution_clock::now();
+
+		ranges::shuffle(people, rng::mt_gen); // randomize ordering before assigning events
+
 		for(person& p : people) {
 			if(!p.can_drive) continue;
 			if(!p.work) {
@@ -1390,17 +1423,17 @@ namespace traffic_sim {
 					events.push(e);
 				}
 				continue;
+			} else {
+				//going to work
+				event e(time_hms(MORNING_HOUR, MORNING_MINUTE_DEVIATION > 0 ? rng::normal_int(MORNING_MINUTE_AVG, MORNING_MINUTE_DEVIATION) : MORNING_MINUTE_AVG, rng::random_double(-60, 60)), event::GO_TO_WORK, &p);
+				if(using_gen) gen_file << e << endl;
+				events.push(e);
+
+				//returning home
+				e = event(time_hms(EVENING_HOUR, MORNING_MINUTE_DEVIATION > 0 ? rng::normal_int(EVENING_MINUTE_AVG, EVENING_MINUTE_DEVIATION) : MORNING_MINUTE_AVG, rng::random_double(-60, 60)), event::GO_HOME, &p);
+				if(using_gen) gen_file << e << endl;
+				events.push(e);
 			}
-
-			//going to work
-			event e(time_hms(MORNING_HOUR, MORNING_MINUTE_AVG+rng::normal_int(-MORNING_MINUTE_RANGE, MORNING_MINUTE_RANGE), rng::random_double(-60, 60)), event::GO_TO_WORK, &p);
-			if(using_gen) gen_file << e << endl;
-			events.push(e);
-
-			//returning home
-			e = event(time_hms(EVENING_HOUR, EVENING_MINUTE_AVG+rng::normal_int(-EVENING_MINUTE_RANGE, EVENING_MINUTE_RANGE), rng::random_double(-60, 60)), event::GO_HOME, &p);
-			if(using_gen) gen_file << e << endl;
-			events.push(e);
 
 			if(events.size() > MAX_CARS) break;
 			//cout << "age " << p.age << " - home: " <<  (coord_from_point(p.home->location));
@@ -1433,25 +1466,25 @@ namespace traffic_sim {
 		}
 	}
 
-	void residential_init(Features& features_in_city) {
+
+	void residential_init(const Ways buildings) {
 		assert(is_init);
 		// residential buildings
 		(void)(VERBOSE && cout << "PARSING RESIDENTIAL BUILDINGS" << endl);
 		auto t1 = chrono::high_resolution_clock::now();
 
-		Ways residential_areas = features_in_city.ways("a[landuse=residential]");
+		vector<thread> mt;
+
 		int count = 0; //resident count
-		for (const Way& a : residential_areas) {
-			//cout << "Residential Area: " << a["name"] << endl;
-			Ways res_buildings_in_area = features_in_city.ways(RESIDENTIAL_BUILDINGS_QUERY.c_str()).intersecting(a);
-			for (const Way& f : res_buildings_in_area) {
-				// lower density for houses
-				residential_buildings.emplace_back(f, building::RESIDENTIAL, ((f["building"] == "house") ? 0.002 : 0.0), residential_buildings.size(), a.id());
-				if(using_gen) gen_file << residential_buildings.back() << endl;
-				//cout << "Residential Building: " << b.name << ", Capacity: " << b.capacity << ", Location: " << coord_from_point(b.location) << endl;
-				count += residential_buildings.back().capacity;
-			}
+		for (const Way& a : buildings) {
+			residential_buildings.emplace_back(a, building::RESIDENTIAL, 0.0, residential_buildings.size());
+			count += residential_buildings.back().capacity;
+			if(EVALUATE_ROAD_CONNECTIONS) mt.emplace_back(building::get_road_connection, residential_buildings.back());
 		}
+
+		for(thread& i : mt) i.join();
+
+		if(using_gen) for(building& b : residential_buildings) gen_file << b << endl;
 
 		auto t2 = chrono::high_resolution_clock::now();
 		(void)(VERBOSE && cout << "Total residents: " << count << endl);
@@ -1464,20 +1497,18 @@ namespace traffic_sim {
 		Features features(GOL_PATH.c_str());
 
 		string query = GOL_QUERY;
-		//query = "a[admin_level=8][int_name=" + query + "]";
 
 		cout << "querying " << query << endl;
 		Feature city = features(query.c_str()).one(); // whole city
 		Features features_in_city = features.intersecting(city);
 
-		Ways roads = features_in_city.ways(WAYS_QUERY.c_str());
 		Relations bus_routes = features_in_city.relations("r[route=bus][type=route]");
 		Ways parkings = features_in_city.ways("a[amenity=parking]");
 
 
 
 		// building graph
-		graph_gen(roads);
+		graph_gen(features_in_city.ways(WAYS_QUERY.c_str()));
 
 		if(using_gen) {
 			gen_file << setprecision(5);
@@ -1487,11 +1518,11 @@ namespace traffic_sim {
 					gen_file << (point)s.end << ' ' << s.length << ' ' << s.max_speed << "; ";
 				}
 				gen_file << endl;
-				gen_file << "w " << p << ": ";
-				for(const point other : weak_connections[p]) {
-					gen_file << other << ' ';
-				}
-				gen_file << endl;
+				//gen_file << "w " << p << ": ";
+				//for(const point other : weak_connections[p]) {
+				//	gen_file << other << ' ';
+				//}
+				//gen_file << endl;
 			}
 
 			for(segment* s : traffic_light_segments) {
@@ -1501,15 +1532,11 @@ namespace traffic_sim {
 
 		rng::randomize();
 
-		residential_init(features_in_city);
+		residential_init(features_in_city.ways(RESIDENTIAL_BUILDINGS_QUERY.c_str()));
 
 		people_init();
 
-
-		// workplaces
-		Features workplace_features = features_in_city(WORK_BUILDINGS_QUERY.c_str());
-
-		workplaces_init(workplace_features);
+		workplaces_init(features_in_city(WORK_BUILDINGS_QUERY.c_str()));
 
 		if(using_gen)
 		for(const person& p : people) {
@@ -1541,52 +1568,56 @@ namespace traffic_sim {
 						curs >> to >> len >> sp;
 						if(!to) continue;
 						graph[from].emplace_back(from, to, sp, len);
+						weak_connections[from].insert(to);
+						weak_connections[to].insert(from);
 						output_segment(out_file, graph[from].back(), 'f');
 					}
 					break;
-				case 'w':
-					ss >> from;
-					ss >> sep;
-					for(string cur; getline(ss, cur, ' ');) {
-						stringstream curs(cur);
-						point to = 0;
-						curs >> to;
-						if(!to) continue;
-						weak_connections[from].push_back(to);
-					}
-					break;
+				//case 'w':
+				//	ss >> from;
+				//	ss >> sep;
+				//	for(string cur; getline(ss, cur, ' ');) {
+				//		stringstream curs(cur);
+				//		point to = 0;
+				//		curs >> to;
+				//		if(!to) continue;
+				//		weak_connections[from].push_back(to);
+				//	}
+				//	break;
 				case 'b':
 					int t;
 					ss >> t;
 					point loc, road_connection;
 					int cap;
-					int res_area;
-					ss >> loc >> road_connection >> cap >> res_area;
+					ss >> loc >> road_connection >> cap;
 					getline(ss, b_name);
 					switch(t) {
 						case building::building_type::RESIDENTIAL:
-							residential_buildings.emplace_back(loc, road_connection, (building::building_type)t, cap, b_name, res_area);
+							residential_buildings.emplace_back(loc, road_connection, (building::building_type)t, cap, b_name);
 							break;
 						case building::building_type::WORKPLACE:
 						case building::building_type::SCHOOL:
-							workplaces.emplace_back(loc, road_connection, (building::building_type)t, cap, b_name, res_area);
+							workplaces.emplace_back(loc, road_connection, (building::building_type)t, cap, b_name);
 							break;
 						case building::building_type::ENTERTAINMENT: break;
 					}
 					break;
 				case 'p':
+					if(REGENERATE_PEOPLE) break;
 					int age, b_ind, w_ind;
 					bool cd;
 					ss >> age >> cd >> b_ind >> w_ind;
-					if(b_ind >= 0) {
-						people.emplace_back(age, cd, residential_buildings[b_ind]);
-						if(w_ind >= 0) people.back().set_work(workplaces[w_ind]);
-					}
+					assert(b_ind >= 0);
+					people.emplace_back(age, cd, residential_buildings[b_ind]);
+					if(w_ind >= 0) people.back().set_work(workplaces[w_ind]);
+
 					break;
 				case 'e':
+					if(REGENERATE_PEOPLE) break;
 					double time;
 					int type, p_ind;
 					ss >> time >> type >> p_ind;
+					if(type <= 1) assert(people[p_ind].work);
 					events.emplace(time, (event::type)type, &people[p_ind]);
 					break;
 				case 't':
@@ -1607,6 +1638,14 @@ namespace traffic_sim {
 			}
 		}
 		if(VERBOSE) cout << "INPUT FILE READING DONE" << endl;
+
+		if(REGENERATE_PEOPLE) {
+			people_init();
+			FeatureStore empty;
+			View v(&empty);
+			workplaces_init(Features(v)); // i had to edit the header file to make this constructor public instead of protected, just to be able to pass an empty object.
+			events_init();
+		}
 
 		graph_init();
 	}

@@ -14,7 +14,7 @@ add_executable (traffic_map "traffic_map.cpp" "traffic_map.hpp")
 
 # Add Geodesk library
 include(FetchContent)
-FetchContent_Declare(geodesk GIT_REPOSITORY 
+FetchContent_Declare(geodesk GIT_REPOSITORY
     https://github.com/clarisma/libgeodesk.git
     GIT_TAG main)
 FetchContent_MakeAvailable(geodesk)
