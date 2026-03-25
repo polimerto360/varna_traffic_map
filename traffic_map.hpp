@@ -46,6 +46,7 @@ namespace config {
 	double TIME_STEP = 0.1; // time step in seconds
 	double SIM_LENGTH = 100.0; // how long to run the simulation
 	double DEFAULT_BUILDING_HEIGHT = 5.0; // default building height in meters
+	int POSITION_TABLE_CELL_SIZE = 2940; // Cell size in imps for the hash table used for determining closest point on the map to each building
 
 	// target workplaces is 150000
 	double EMPLOYEE_DENSITY = 0.038; // people per cubic meter (adding 0.01 increases result by 56309)
@@ -84,6 +85,10 @@ namespace config {
 	double EPSILON = 0.000000001;
 
 	double RANDOM_EVENT_CHANCE = 0.2; // chance for an unemployed person to go outside
+
+	int TARGET_POPULATION = 320000;
+	int TARGET_WORKPLACES  = 280000;
+	double EMPLOYMENT_RATE = 86.2;
 
 	bool EVALUATE_ROAD_CONNECTIONS = false; // if generating objects, whether to precompute each building's closest point on the road (slow)
 
@@ -181,6 +186,10 @@ namespace config {
 				case hash_str("EVENING_HOUR"): EVENING_HOUR = stoi(value); break;
 				case hash_str("EVENING_MINUTE_AVG"): EVENING_MINUTE_AVG = stoi(value); break;
 				case hash_str("EVENING_MINUTE_DEVIATION"): EVENING_MINUTE_DEVIATION = stod(value); break;
+				case hash_str("TARGET_POPULATION"): TARGET_POPULATION = stoi(value); break;
+				case hash_str("POSITION_TABLE_CELL_SIZE"): POSITION_TABLE_CELL_SIZE = (int)round(stod(value) / 0.006801778856644); break; // to convert meters to imps
+				case hash_str("TARGET_WORKPLACES "): TARGET_WORKPLACES = stoi(value); break;
+				case hash_str("EMPLOYMENT_RATE"): EMPLOYMENT_RATE = stod(value); break;
 			}
 
 			double ratio_sum = RATIO_KIDS + RATIO_ADULTS_AFTER_65 + RATIO_ADULTS_TO_65;
@@ -201,6 +210,8 @@ namespace traffic_sim
 	using namespace config;
 
 	typedef int64_t point; // hash for node coordinates
+	typedef unordered_map<int, unordered_map<int, vector<point>>> position_table_t;
+	typedef unordered_map<int, unordered_map<int, vector<point>>> * position_table_t_ptr;
 
 	inline double cur_time = 0; //seconds (0 - 86400)
 
@@ -463,7 +474,11 @@ namespace traffic_sim
 	inline vector<segment*> traffic_light_segments;
 	inline vector<pair<point, int>> tls_coords;
 
+
+	//Too slow O(n^2)
 	point closest_point(const Coordinate x) {
+		static int count = 0;
+		//cout << "Calling slow closest point " << count++ << endl;
 		const auto x_p = static_cast<point>(x);
 		point cur_p = 0;
 		double min_dist = INFINITY;
@@ -479,6 +494,25 @@ namespace traffic_sim
 		return cur_p;
 	}
 
+	point closest_point(Coordinate q, position_table_t_ptr pt) { // closest point to q
+		double min_dist = 1e9;
+		point min_point = 0;
+		//
+		// # # #
+		// # q #
+		// # # #
+		// check all neighboring squares in the table for candidate points
+		for(int cell_offset_x = -1; cell_offset_x <= 1; cell_offset_x++)
+		for(int cell_offset_y = -1; cell_offset_y <= 1; cell_offset_y++)
+		for(point i : (*pt)[q.x / POSITION_TABLE_CELL_SIZE + cell_offset_x][q.y / POSITION_TABLE_CELL_SIZE + cell_offset_y]) {
+			if(double d = coord_dist(i, (point)q); d < min_dist) {
+				min_point = i;
+				min_dist = d;
+			}
+		}
+
+		return min_point;
+	}
 
 	struct building {
 		enum building_type {
@@ -548,12 +582,18 @@ namespace traffic_sim
 			name = nam;
 		}
 
-		static void get_road_connection(const building& b) {
-			b.road_connection = closest_point(b.location);
+
+		/*static void get_road_connection(const building& b, position_table_t_ptr pt = nullptr) {
+			if(pt) b.road_connection = closest_point(b.location, pt);
+			else b.road_connection = closest_point(b.location);
+		}*/
+		void get_road_connection(position_table_t_ptr pt = nullptr) const {
+			if(pt) road_connection = closest_point(location, pt);
+			else road_connection = closest_point(location);
 		}
 
 		explicit operator point() const noexcept {
-			if(!road_connection) get_road_connection(*this);
+			if(!road_connection) get_road_connection();
 			return road_connection;
 		}
 
@@ -666,7 +706,7 @@ namespace pathfinding {
 		// A* with compressed graph
 
 		auto t1 = chrono::high_resolution_clock::now();
-		(void)(VERBOSE && cout << "STARTED A*" << endl);
+		//(void)(VERBOSE && cout << "STARTED A*" << endl);
 
 		if(!is_init || component[from] != component[to]) return false;
 
@@ -727,7 +767,6 @@ namespace pathfinding {
 			pq.emplace( 0.0, coord_dist(from, long_target), from );
 		}
 		while(!pq.empty()) {
-			//TODO: include segment speed in a*
 			auto [cur_dist, _, cur_point] = pq.top();
 			//assert((double)_ != nan);
 			//cout << "Current point: " << coord_from_point(cur_point) << " dist: " << cur_dist << endl;
@@ -760,7 +799,7 @@ namespace pathfinding {
 				ranges::reverse(path);
 
 				const auto t2 = chrono::high_resolution_clock::now();
-				(void)(VERBOSE && cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl);
+				//(void)(VERBOSE && cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl);
 				return true;
 			}
 			astar_visited[cur_point] = true;
@@ -1323,37 +1362,47 @@ namespace traffic_sim {
 		(void)(VERBOSE && cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl);
 
 	}
-	void workplaces_init(const Features workplace_features) {
+
+	void workplaces_init(const Features workplace_features, position_table_t_ptr position_table = nullptr) {
+		//TODO: include target population
 		(void)(VERBOSE && cout << "PARSING WORKPLACES" << endl);
 		const auto t1 = chrono::high_resolution_clock::now();
 
-		int count = 0;
-		vector<thread> mt;
+		int total_positions = 0;
 		for (const Feature& f : workplace_features)
 		{
 			workplaces.emplace_back(f, (f["building"] == "school") ? building::SCHOOL : building::WORKPLACE, 0.0, workplaces.size());
-			if(EVALUATE_ROAD_CONNECTIONS) mt.emplace_back(building::get_road_connection, workplaces.back());
+			if(EVALUATE_ROAD_CONNECTIONS) workplaces.back().get_road_connection(position_table);
 			//cout << "Workplace: " << workplaces.back().name << ", Capacity: " << workplaces.back().capacity << ", Location: " << workplaces.back().location << endl;
 		}
 
 		for(const building& i : workplaces)
-			count += i.capacity;
+			total_positions += i.capacity;
 
+		double mult = TARGET_WORKPLACES / (double)total_positions;
 
-		for(thread& i : mt) i.join();
+		total_positions = 0;
 
-		if(using_gen) for(building& b : workplaces) gen_file << b << endl;
+		for(building& b : workplaces) {
+			b.capacity = round(b.capacity * mult);
+			total_positions += b.capacity;
+			if(using_gen) gen_file << b << endl;
+		}
 
 		int assigned_positions = 0;
 
-		for(person& p : people) {
-			if(p.age <= 6) continue;
-			if(assigned_positions == count) break;
+		for(person& p : people) { // assign work for each person (work for kids 7-18 = school)
+			// exceptions based on age and employment rate
+			if(p.age <= 6 || p.age >= 65 || rng::random_chance(EMPLOYMENT_RATE / 100.0)) continue;
+			if(assigned_positions == total_positions) break;
 			while(true) {
+				// random workplace
 				building& w = workplaces[rng::random_int(0, workplaces.size()-1)];
 
+				// no child labour
 				if(p.age <= 18 && w.type != building::building_type::SCHOOL) continue;
 
+				// include a chance to reroll based on the distance from the person's home and candidate workplace
 				if((w.capacity > w.cur_employees || w.type == building::building_type::SCHOOL) && rng::random_chance(pow(0.9994, coord_dist(p.home->location, w.location)))) {
 					p.work = &w;
 					w.cur_employees++;
@@ -1364,7 +1413,7 @@ namespace traffic_sim {
 		}
 
 		const auto t2 = chrono::high_resolution_clock::now();
-		(void)(VERBOSE && cout << "Total positions: " << count << endl);
+		(void)(VERBOSE && cout << "Total positions: " << total_positions << endl);
 		(void)(VERBOSE && cout << "DONE" << endl);
 		(void)(VERBOSE && cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl);
 	}
@@ -1447,7 +1496,8 @@ namespace traffic_sim {
 	}
 	void sim_tick(const double dt) {
 		cur_time += dt;
-		cout << "PROGRESS: " << cur_time << " / " << SIM_LENGTH << endl;
+		cout << "PROGRESS: " << cur_time << " / " << SIM_LENGTH << '\r';
+		flush(cout);
 		out_file << "t " << cur_time << endl;
 		while(!events.empty() && events.top().time <= cur_time) {
 			events.top().call();
@@ -1467,27 +1517,31 @@ namespace traffic_sim {
 	}
 
 
-	void residential_init(const Ways buildings) {
+	void residential_init(const Ways buildings, position_table_t_ptr position_table = nullptr) {
 		assert(is_init);
 		// residential buildings
 		(void)(VERBOSE && cout << "PARSING RESIDENTIAL BUILDINGS" << endl);
 		auto t1 = chrono::high_resolution_clock::now();
 
-		vector<thread> mt;
-
-		int count = 0; //resident count
+		int resident_count = 0; //resident count
 		for (const Way& a : buildings) {
 			residential_buildings.emplace_back(a, building::RESIDENTIAL, 0.0, residential_buildings.size());
-			count += residential_buildings.back().capacity;
-			if(EVALUATE_ROAD_CONNECTIONS) mt.emplace_back(building::get_road_connection, residential_buildings.back());
+			resident_count += residential_buildings.back().capacity;
+			if(EVALUATE_ROAD_CONNECTIONS) residential_buildings.back().get_road_connection(position_table);
 		}
 
-		for(thread& i : mt) i.join();
+		double mult = TARGET_POPULATION / (double)resident_count;
 
-		if(using_gen) for(building& b : residential_buildings) gen_file << b << endl;
+		resident_count = 0;
+
+		for(building& b : residential_buildings) {
+			b.capacity = round(b.capacity * mult);
+			resident_count += b.capacity;
+			if(using_gen) gen_file << b << endl;
+		}
 
 		auto t2 = chrono::high_resolution_clock::now();
-		(void)(VERBOSE && cout << "Total residents: " << count << endl);
+		(void)(VERBOSE && cout << "Total residents: " << resident_count  << endl);
 		(void)(VERBOSE && cout << "DONE" << endl);
 		(void)(VERBOSE && cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl);
 
@@ -1504,6 +1558,7 @@ namespace traffic_sim {
 
 		Relations bus_routes = features_in_city.relations("r[route=bus][type=route]");
 		Ways parkings = features_in_city.ways("a[amenity=parking]");
+
 
 
 
@@ -1530,13 +1585,22 @@ namespace traffic_sim {
 			}
 		}
 
+		position_table_t_ptr position_table = new position_table_t();
+
+		for(point p : all_nodes) {
+			Coordinate c = coord_from_point(p);
+			(*position_table)[c.x / POSITION_TABLE_CELL_SIZE][c.y / POSITION_TABLE_CELL_SIZE].push_back(p);
+		}
+
 		rng::randomize();
 
-		residential_init(features_in_city.ways(RESIDENTIAL_BUILDINGS_QUERY.c_str()));
+		residential_init(features_in_city.ways(RESIDENTIAL_BUILDINGS_QUERY.c_str()), position_table);
 
 		people_init();
 
-		workplaces_init(features_in_city(WORK_BUILDINGS_QUERY.c_str()));
+		workplaces_init(features_in_city(WORK_BUILDINGS_QUERY.c_str()), position_table);
+
+		free(position_table);
 
 		if(using_gen)
 		for(const person& p : people) {
@@ -1642,8 +1706,7 @@ namespace traffic_sim {
 		if(REGENERATE_PEOPLE) {
 			people_init();
 			FeatureStore empty;
-			View v(&empty);
-			workplaces_init(Features(v)); // i had to edit the header file to make this constructor public instead of protected, just to be able to pass an empty object.
+			workplaces_init(Features(empty)); // i had to fork geodesk and make a new constructor for this, just to be able to pass an empty object.
 			events_init();
 		}
 

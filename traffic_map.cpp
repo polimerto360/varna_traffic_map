@@ -63,13 +63,13 @@ int main(int argc, char *argv[])
 	// DONE: Add config file support; check command line arguments and parse input files accordingly
 	// DONE: Generate generated objects file
 	// DONE: Add input file support
-	// TODO: Add population target support using binary search
+	// DONE: Add population target
 	// TODO: Add different density coefficients for different building types
 	// DONE 80%: Make work assignment based on people, not on workplaces
 
 
 	auto t1 = chrono::high_resolution_clock::now();
-
+	cout << endl;
 	for(double tick = 0.0; tick < SIM_LENGTH; tick += TIME_STEP) {
 		sim_tick(TIME_STEP);
 	}
