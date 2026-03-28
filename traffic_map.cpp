@@ -64,8 +64,10 @@ int main(int argc, char *argv[])
 	// DONE: Generate generated objects file
 	// DONE: Add input file support
 	// DONE: Add population target
-	// TODO: Add different density coefficients for different building types
+	// DONE: Add different density coefficients for different building types
 	// DONE 80%: Make work assignment based on people, not on workplaces
+	// TODO: Fix car movement..
+	// TODO: Add output file indexing in godot for more efficient reading
 
 
 	auto t1 = chrono::high_resolution_clock::now();
@@ -75,7 +77,7 @@ int main(int argc, char *argv[])
 	}
 
 	const auto t2 = chrono::high_resolution_clock::now();
-	cout << "SIMULATION FINISHED" << endl;
+	cout << endl << "SIMULATION FINISHED" << endl;
 	cout << duration_cast<chrono::milliseconds>(t2 - t1) << " milliseconds" << endl;
 
 

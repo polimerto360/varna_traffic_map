@@ -1,14 +1,14 @@
-[gd_scene load_steps=2 format=3 uid="uid://bimp3twbo746o"]
+[gd_scene format=3 uid="uid://bimp3twbo746o"]
 
 [ext_resource type="Script" uid="uid://c01wrxhnsqbed" path="res://main.gd" id="1_ig7tw"]
 
-[node name="Main" type="Node2D"]
+[node name="Main" type="Node2D" unique_id=241985112]
 z_index = 870
 script = ExtResource("1_ig7tw")
 
-[node name="Camera2D" type="Camera2D" parent="."]
+[node name="Camera2D" type="Camera2D" parent="." unique_id=154135616]
 position = Vector2(3313491.5, -5723216)
 
-[node name="Cars" type="Node" parent="."]
+[node name="Cars" type="Node" parent="." unique_id=1684126915]
 
 [connection signal="draw" from="." to="." method="_draw"]

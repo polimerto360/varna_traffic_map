@@ -45,7 +45,7 @@ namespace config {
 
 	double TIME_STEP = 0.1; // time step in seconds
 	double SIM_LENGTH = 100.0; // how long to run the simulation
-	double DEFAULT_BUILDING_HEIGHT = 5.0; // default building height in meters
+	double DEFAULT_FLOOR_HEIGHT = 5.0; // default floor height in meters (for buildings without tagged floor count)
 	int POSITION_TABLE_CELL_SIZE = 2940; // Cell size in imps for the hash table used for determining closest point on the map to each building
 
 	// target workplaces is 150000
@@ -73,7 +73,7 @@ namespace config {
 
 	double DEFAULT_TRAFFIC_LIGHT_ON_TIME = 15.0; // on means green, off means red
 	double DEFAULT_TRAFFIC_LIGHT_OFF_TIME = 45.0;
-	int MAX_CARS = 1000; // total number of cars in the simulation
+	int MAX_CARS = 0; // total number of cars in the simulation (0 or less for unlimited)
 
 	int MORNING_HOUR = 8;
 	int MORNING_MINUTE_AVG = 30;
@@ -82,7 +82,7 @@ namespace config {
 	int EVENING_MINUTE_AVG = 30;
 	double EVENING_MINUTE_DEVIATION = 10.0;
 
-	double EPSILON = 0.000000001;
+	double EPSILON = 0.001;
 
 	double RANDOM_EVENT_CHANCE = 0.2; // chance for an unemployed person to go outside
 
@@ -154,7 +154,7 @@ namespace config {
 				case hash_str("TIME_STEP"): TIME_STEP = stod(value); if(TIME_STEP <= 0) TIME_STEP = 1.0; break;
 				case hash_str("SIM_LENGTH"): SIM_LENGTH = stod(value); if(SIM_LENGTH <= 0) SIM_LENGTH = 100.0; break;
 
-				case hash_str("DEFAULT_BUILDING_HEIGHT"): DEFAULT_BUILDING_HEIGHT = stod(value); if(DEFAULT_BUILDING_HEIGHT <= 0) DEFAULT_BUILDING_HEIGHT = 5.0; break;
+				case hash_str("DEFAULT_FLOOR_HEIGHT"): DEFAULT_FLOOR_HEIGHT = stod(value); if(DEFAULT_FLOOR_HEIGHT <= 0) DEFAULT_FLOOR_HEIGHT = 5.0; break;
 				case hash_str("EMPLOYEE_DENSITY"): EMPLOYEE_DENSITY = stod(value); if(EMPLOYEE_DENSITY <= 0) EMPLOYEE_DENSITY = 0.038; break;
 				case hash_str("MIN_EMPLOYEES"): MIN_EMPLOYEES = stoi(value); if(MIN_EMPLOYEES <= 0) MIN_EMPLOYEES = 5; break;
 				case hash_str("RESIDENTIAL_DENSITY"): RESIDENTIAL_DENSITY = stod(value); if(RESIDENTIAL_DENSITY <= 0) RESIDENTIAL_DENSITY = 0.012; break;
@@ -175,7 +175,7 @@ namespace config {
 
 				case hash_str("DEFAULT_TRAFFIC_LIGHT_ON_TIME"): DEFAULT_TRAFFIC_LIGHT_ON_TIME = stod(value); if(DEFAULT_TRAFFIC_LIGHT_ON_TIME <= 0) DEFAULT_TRAFFIC_LIGHT_ON_TIME = 15.0; break;
 				case hash_str("DEFAULT_TRAFFIC_LIGHT_OFF_TIME"): DEFAULT_TRAFFIC_LIGHT_OFF_TIME = stod(value); if(DEFAULT_TRAFFIC_LIGHT_OFF_TIME <= 0) DEFAULT_TRAFFIC_LIGHT_OFF_TIME = 45.0; break;
-				case hash_str("MAX_CARS"): MAX_CARS = stoi(value); if(MAX_CARS <= 0) MAX_CARS = 1000.0; break;
+				case hash_str("MAX_CARS"): MAX_CARS = stoi(value); break;
 				case hash_str("RANDOM_EVENT_CHANCE"): RANDOM_EVENT_CHANCE = stod(value); if(RANDOM_EVENT_CHANCE <= 0) RANDOM_EVENT_CHANCE = 0.2; break;
 
 				case hash_str("VERBOSE"): to_lower(value); VERBOSE = (VERBOSE || value == "true" || value == "1"); break;
@@ -529,7 +529,7 @@ namespace traffic_sim
 		int capacity; // max number of residents/people/employees
 		int cur_employees = 0;
 
-		building(const Feature& loc, building_type t, double people_density = 0.0, int ind = -1) {
+		building(const Feature& loc, building_type t, int ind = -1) {
 			assert(is_init);
 			index = ind;
 			name = loc["name"].storedString();
@@ -544,33 +544,58 @@ namespace traffic_sim
 			location = loc.centroid();
 			//road_connection = closest_point(loc.centroid()); // too slow to do on initialization
 
-			double height = DEFAULT_BUILDING_HEIGHT;
 
-			if(loc.hasTag("height")) {
-				height = stod(loc["height"]);
+			int floors = 1;
+
+			if(loc.hasTag("building:levels")) {
+				floors = stoi(loc["building:levels"]);
+			} else {
+				double height = DEFAULT_FLOOR_HEIGHT;
+
+				if(loc.hasTag("height")) {
+					height = stod(loc["height"]);
+				}
+				floors = round(height / DEFAULT_FLOOR_HEIGHT);
 			}
 
-			int min_cap;
+
+			int min_cap = 1;
+			double density = 0.02; // people / m^2
+			if(loc.hasTag("building"))
+			switch (hash_str(loc["building"].storedString().data())) {
+				case hash_str("detached"):
+				case hash_str("house"): density = 0.0133; break;
+				case hash_str("terrace"):
+				case hash_str("apartments"): density = 0.05; break;
+				case hash_str("school"):
+				case hash_str("kindergarten"):
+				case hash_str("office"): density = 0.1; break;
+				case hash_str("industrial"): density = 0.03; break;
+				default: density = 0.02; break;
+			}
+
+			if(loc.hasTag("shop"))
+			switch (hash_str(loc["shop"].storedString().data())) {
+				case hash_str("mall"): density = 0.002; break;
+				default: density = 0.015; break;
+			}
 			switch (type) {
 				case RESIDENTIAL:
-					if (people_density == 0.0)
-						people_density = RESIDENTIAL_DENSITY; // residents per cubic meter
+					density *= RESIDENTIAL_DENSITY; // residents per cubic meter
 					min_cap = MIN_RESIDENTS;
 					break;
 				case ENTERTAINMENT:
-					if (people_density == 0.0)
-						people_density = ENTERTAINMENT_DENSITY; // people per cubic meter
+					density *= ENTERTAINMENT_DENSITY; // people per cubic meter
 					min_cap = MIN_VISITORS;
 					break;
 				case WORKPLACE:
 				case SCHOOL:
-					if (people_density == 0.0)
-						people_density = EMPLOYEE_DENSITY; // employees per cubic meter
+					density *= EMPLOYEE_DENSITY; // employees per cubic meter
 					min_cap = MIN_EMPLOYEES;
 					break;
 			}
 
-			capacity = max(static_cast<int>(height * loc.area() * people_density), min_cap);
+			capacity = max(static_cast<int>(floors * loc.area() * density), min_cap);
 		}
 
 		building(const point loc, const point road_con, building_type t, int cap, string nam) {
@@ -992,6 +1017,7 @@ namespace traffic_sim {
 		segment* next_segment = nullptr;
 		double segment_position = 0.0;
 		vector<segment*> path;
+		char color = 'r';
 
 		bool should_reset = false;
 
@@ -1003,7 +1029,6 @@ namespace traffic_sim {
 				cur_segment = path.front();
 				target_loc = (point)target->road_connection;
 				position = cur_segment->start;
-				for(const segment* s : path) output_segment(out_file, *s, 'c');
 			} else {
 				should_reset = true;
 			}
@@ -1036,6 +1061,7 @@ namespace traffic_sim {
 			return min(max_speed, cur_segment->max_speed);
 		}
 		[[nodiscard]] double max_dist(const double dt) const { // calculate maximum distance reachable in dt (delta time)
+			assert(cur_speed <= get_max_speed());
 			const double max_v = get_max_speed();
 			const double base_dist = cur_speed * dt;
 			const double max_point = (max_v - cur_speed) / accel;
@@ -1054,7 +1080,7 @@ namespace traffic_sim {
 			 */
 
 			const double s_1 = max_point < EPSILON ? 0.0 : min(max_point, dt) * max_v / max_point / 2.0;
-			//                 (1)   (                 2                )
+			//                 (1)   (              2               )
 			return base_dist + s_1 + max(dt - max_point, 0.0) * max_v;
 		}
 		[[nodiscard]] double min_dist(const double dt) const { // calculate minimum distance reachable in dt (delta time)
@@ -1098,7 +1124,7 @@ namespace traffic_sim {
 				segment_position -= cur_segment->length;
 
 
-				for (auto it = cur_segment->cars.begin(); it != cur_segment->cars.end(); ++it)
+				for (auto it = cur_segment->cars.begin(); it != cur_segment->cars.end(); ++it) // erase this from the current segment's car list
 				{
 					if (*it == this) {
 						cur_segment->cars.erase(it);
@@ -1119,6 +1145,7 @@ namespace traffic_sim {
 				cur_segment = path.front();
 				cur_segment->cars.push_back(this);
 
+				set_speed(cur_speed);
 				// setting next_segment for lane checking
 				if(next_segment == &short_segments[*cur_segment] || next_segment == nullptr) {
 					for(const segment* s : path) {
@@ -1155,13 +1182,16 @@ namespace traffic_sim {
 			double max_d = max_dist(dt);
 
 			if(obst < 0.0) {
-				move_dist(max_d); // no obstacles ahead, go full power
 				set_speed(cur_speed + dt * accel);
+				move_dist(max_d); // no obstacles ahead, go full power
+				if(cur_speed == get_max_speed()) color = 'o';
+				else color = 'r';
 				return;
 			} else {
-				if(obst <= DEFAULT_CAR_RADIUS) {obst = 0.0; move_dist(0.0); cur_speed = 0.0; return;}
+				if(obst <= DEFAULT_CAR_RADIUS) {obst = 0.0; move_dist(0.0); cur_speed = 0.0; color = 'k'; return;}
 				double v_max = get_max_speed();
 				if(v_max - cur_speed <= EPSILON) {
+					color = 'g';
 					double t_stop = (2*brake*obst - cur_speed * cur_speed)
 								/(2*brake*cur_speed);
 					if(t_stop < 0) move_dist(min_d, dt);
@@ -1177,8 +1207,9 @@ namespace traffic_sim {
 				double k = calc_k(v_max);
 
 				double t_stop = (v_max - cur_speed) / (accel * (1-k)); // negative t_stop means that the crossing is behind the x-axis
-				if(t_stop <= 0) move_dist(min_d, dt); // t_stop
+				if(t_stop <= 0) {move_dist(min_d, dt); color = 'k';} // t_stop
 				else if(k > 0){
+					color = 'b';
 					double t_max1 = max(0.0, (v_max - cur_speed) / accel);
 					double t_max2 = t_stop + (accel * t_stop * k) / brake;
 					if(t_max2 > dt) move_dist(max_d, dt);
@@ -1189,7 +1220,8 @@ namespace traffic_sim {
 						move_dist(area(cur_speed, brake, dt-t_max2), dt-t_max2);
 					}
 				} else {
-					// negative k: obst is too far to reach maximum speed before meeting
+					color = 'd';
+					// negative k: obst is too close to reach maximum speed before meeting
 					// negative k messes up the calculation for the other faces, so a different formula is needed
 					//t_stop = (2 * brake * obst - cur_speed * cur_speed) * (accel + brake) / (2 * cur_speed + )
 					if(const double t_stop2 = calc_tstop2(); t_stop2 > dt) move_dist(max_d, dt);
@@ -1280,7 +1312,7 @@ namespace traffic_sim {
 
 	static ostream& operator<<(ostream& out, const car& c)
 	{
-		out << "car " << c.position;
+		out << "car " << c.position << ' ' << c.color;
 		return out;
 	}
 
@@ -1371,7 +1403,7 @@ namespace traffic_sim {
 		int total_positions = 0;
 		for (const Feature& f : workplace_features)
 		{
-			workplaces.emplace_back(f, (f["building"] == "school") ? building::SCHOOL : building::WORKPLACE, 0.0, workplaces.size());
+			workplaces.emplace_back(f, (f["building"] == "school") ? building::SCHOOL : building::WORKPLACE, workplaces.size());
 			if(EVALUATE_ROAD_CONNECTIONS) workplaces.back().get_road_connection(position_table);
 			//cout << "Workplace: " << workplaces.back().name << ", Capacity: " << workplaces.back().capacity << ", Location: " << workplaces.back().location << endl;
 		}
@@ -1484,7 +1516,7 @@ namespace traffic_sim {
 				events.push(e);
 			}
 
-			if(events.size() > MAX_CARS) break;
+			if(MAX_CARS > 0 && events.size() > MAX_CARS) break;
 			//cout << "age " << p.age << " - home: " <<  (coord_from_point(p.home->location));
 			//if(p.work) cout << "; work: " << (coord_from_point(p.work->location));
 			//cout << "; can drive: " << p.can_drive << endl;
@@ -1525,7 +1557,7 @@ namespace traffic_sim {
 
 		int resident_count = 0; //resident count
 		for (const Way& a : buildings) {
-			residential_buildings.emplace_back(a, building::RESIDENTIAL, 0.0, residential_buildings.size());
+			residential_buildings.emplace_back(a, building::RESIDENTIAL, residential_buildings.size());
 			resident_count += residential_buildings.back().capacity;
 			if(EVALUATE_ROAD_CONNECTIONS) residential_buildings.back().get_road_connection(position_table);
 		}

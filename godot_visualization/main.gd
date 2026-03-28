@@ -13,10 +13,12 @@ var c_gr = preload("res://c.tres")
 var l_gr = preload("res://l.tres")
 var s_gr = preload("res://s.tres")
 var time: float = 0.0
-var step = 0.1
-var cars = {}
-var traffic_lights = {}
+var step = 1
 var timer: Timer
+var input_file = FileAccess.open(OUT_PATH, FileAccess.READ).get_as_text().split("\n")
+var timestamps = {}
+var cars: Array
+var traffic_lights: Array
 # Called when the node enters the scene tree for the first time.
 func _ready() -> void:
 	var output: Array = []
@@ -30,7 +32,9 @@ func _ready() -> void:
 	var lines = 0;
 	var curr_cars = []
 	var curr_traffic_lights = []
-	for line in FileAccess.open(OUT_PATH, FileAccess.READ).get_as_text().split("\n"):
+	
+	for i in input_file.size():
+		var line = input_file[i]
 		if !line: continue
 		var args = line.split(" ")
 		if(args[0] == "seg"):
@@ -53,18 +57,18 @@ func _ready() -> void:
 			add_child(l)
 			lines += 1
 			$Camera2D.position = l.points[0]
-		if(args[0] == "car"):
-			curr_cars.append(Vector2(float(args[1]) / 100.0, float(args[2]) / -100.0))
-		if(args[0] == "trl"):
-			curr_traffic_lights.append([Vector2( int(args[1])/100.0, int(args[2])/-100.0), Vector2( int(args[3])/100.0, int(args[4])/-100.0), args[5]])
+		#if(args[0] == "car"):
+		#	curr_cars.append([Vector2(float(args[1]) / 100.0, float(args[2]) / -100.0), args[3]])
+		#if(args[0] == "trl"):
+		#	curr_traffic_lights.append([Vector2( int(args[1])/100.0, int(args[2])/-100.0), Vector2( int(args[3])/100.0, int(args[4])/-100.0), args[5]])
 		if(args[0] == "t"):
-			cars[time] = curr_cars.duplicate()
-			traffic_lights[time] = curr_traffic_lights.duplicate()
-			time = snapped(float(args[1]), step);
-			curr_cars.clear()
-			curr_traffic_lights.clear()
+			timestamps[float(args[1])] = i
+		#	cars[time] = curr_cars.duplicate()
+		#	traffic_lights[time] = curr_traffic_lights.duplicate()
+		#	time = snapped(float(args[1]), step);
+		#	curr_cars.clear()
+		#	curr_traffic_lights.clear()
 	print("segments: ", lines)
-	cars[time] = curr_cars
 	time = 0.0
 	timer = Timer.new()
 	add_child(timer)
@@ -75,6 +79,20 @@ func time_out():
 	time += step
 	print("time = ", time)
 	queue_redraw()
+	
+func read_curr_time():
+	if(!timestamps.has(time)): return
+	var l_ind = timestamps[time]+1
+	var line = input_file[l_ind]
+	cars = []
+	traffic_lights = []
+	while line[1] != ' ':
+		var args = line.split(' ', false)
+		match args[0]:
+			"car": cars.push_back([Vector2(float(args[1]) / 100.0, float(args[2]) / -100.0), args[3]])
+			"trl": traffic_lights.push_back([Vector2( int(args[1])/100.0, int(args[2])/-100.0), Vector2( int(args[3])/100.0, int(args[4])/-100.0), args[5]])
+		l_ind += 1
+		line = input_file[l_ind]
 func _draw():
 	
 	#draw_circle(Vector2(0, 0), 1, Color.CORAL, true)
@@ -87,12 +105,22 @@ func _draw():
 	#l.width = 1
 	#add_child(l)
 	time = snapped(time, step)
-	if(cars.has(time)):
-		for car in cars[time]:
-			draw_circle(car, 5, Color.BROWN, true)
-	if(traffic_lights.has(time)):
-		for trl in traffic_lights[time]:
-			draw_line(trl[0], trl[1], Color.LIME_GREEN if trl[2] == 'g' else Color.RED, 2)
+	read_curr_time()
+	
+	 
+	for car in cars:
+		var c: Color
+		match car[1]:
+			"r": c = Color.RED
+			"b": c = Color.BLUE
+			"d": c = Color.DARK_BLUE
+			"g": c = Color.LIME
+			"k": c = Color.BLACK
+			"o": c = Color.ORANGE
+		draw_circle(car[0], 5, c, true)
+	
+	for trl in traffic_lights:
+		draw_line(trl[0], trl[1], Color.LIME_GREEN if trl[2] == 'g' else Color.RED, 2)
 	
 
 # Called every frame. 'delta' is the elapsed time since the previous frame.
@@ -126,13 +154,21 @@ func _input(event: InputEvent) -> void:
 			step = -abs(step)
 		if Input.is_key_pressed(KEY_RIGHT):
 			step = abs(step)
+		if Input.is_key_pressed(KEY_PERIOD):
+			time += abs(step)
+			print("time = ", time)
+			queue_redraw()
+		if Input.is_key_pressed(KEY_COMMA):
+			time -= abs(step)
+			print("time = ", time)
+			queue_redraw()
 		if Input.is_key_pressed(KEY_SPACE):
 			if timer.is_stopped():
 				timer.start(abs(step))
 			else:
 				timer.stop()
-		if Input.is_key_pressed(KEY_BRACKETLEFT): time -= 5.0
-		if Input.is_key_pressed(KEY_BRACKETRIGHT): time += 5.0
+		if Input.is_key_pressed(KEY_BRACKETLEFT): time -= 50.0 if Input.is_key_pressed(KEY_SHIFT) else 5.0
+		if Input.is_key_pressed(KEY_BRACKETRIGHT): time += 50.0 if Input.is_key_pressed(KEY_SHIFT) else 5.0
 			
 	if event is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		$Camera2D.position -= event.screen_relative / $Camera2D.zoom
