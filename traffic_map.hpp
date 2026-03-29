@@ -215,6 +215,34 @@ namespace traffic_sim
 
 	inline double cur_time = 0; //seconds (0 - 86400)
 
+	enum out_types {
+		TIME = 			0,
+		SEGMENT = 		0b1,
+		TRAFFIC_LIGHT = 0b10,
+		CAR = 			0b11
+	};
+
+	enum segment_types {
+		FORWARD = 	0,
+		REVERSE = 	0b0100,
+		LONG = 		0b1000,
+		BLACK_SEG =	0b1100
+	};
+
+	enum car_types {
+		RED = 		0,
+		GREEN = 	0b00100,
+		BLUE = 		0b01000,
+		DARK_BLUE = 0b01100,
+		ORANGE =	0b10000,
+		BLACK = 	0b10100
+	};
+
+	enum traffic_light_types {
+		DEFINITION = 	0,
+		SERIES = 		0b0100,
+	};
+
 	bool using_input = false;
 	ifstream in_file;
 
@@ -228,7 +256,7 @@ namespace traffic_sim
 			if(in_file) using_input = true;
 			else cout << "Error reading input file." << endl;
 		}
-		out_file = ofstream(OUT_VISUALISATION_PATH, ofstream::trunc | ofstream::out);
+		out_file = ofstream(OUT_VISUALISATION_PATH, ofstream::trunc | ofstream::out | ofstream::binary);
 
 		if(!out_file) {
 			cout << "Error opening output file." << endl;
@@ -353,7 +381,6 @@ namespace traffic_sim
 		Coordinate start;
 		Coordinate end;
 		double length{};
-
 		vector<car*> cars;
 		double max_speed{}; // maximum speed allowed on the segment
 
@@ -458,14 +485,30 @@ namespace traffic_sim
 	// 	return out;
 	// }
 
-	void output_segment(ostream& out, const segment& seg, char type) {
-		if(out)
-		out << "seg " << seg.start.x << " " << seg.start.y << " " << seg.end.x << " " << seg.end.y << " " << type << endl;
+	void output_segment(ostream& out, const segment& seg, segment_types t) {
+		if(!out) return;
+		out.put((char)out_types::SEGMENT | (char)t);
+
+		point s = (point)seg.start;
+		out.write((char*)&s, sizeof(point));
+
+		point e = (point)seg.end;
+		out.write((char*)&e, sizeof(point));
+
+		flush(out);
 	}
 
-	void output_traffic_light(ostream& out, const segment* seg) {
-		if(out)
-		out << "trl " << seg->start.x << " " << seg->start.y << " " << seg->end.x << " " << seg->end.y << " " << (seg->is_red() ? 'r' : 'g') << endl;
+	void output_traffic_light(ostream& out, const segment* seg) { // outputs definition
+		if(!out) return;
+		out.put((char)out_types::TRAFFIC_LIGHT | (char)traffic_light_types::DEFINITION);
+
+		point s = (point)seg->start;
+		out.write((char*)&s, sizeof(point));
+
+		point e = (point)seg->end;
+		out.write((char*)&e, sizeof(point));
+
+		flush(out);
 	}
 
 
@@ -477,7 +520,7 @@ namespace traffic_sim
 
 	//Too slow O(n^2)
 	point closest_point(const Coordinate x) {
-		static int count = 0;
+		//static int count = 0;
 		//cout << "Calling slow closest point " << count++ << endl;
 		const auto x_p = static_cast<point>(x);
 		point cur_p = 0;
@@ -887,7 +930,7 @@ namespace pathfinding {
 
 				// here our long segment is (from, to), and its composing short segments are stored in long_segment
 				segment l(from, to, total_speed, total_dist);
-				output_segment(out_file, l, 'l');
+				output_segment(out_file, l, segment_types::LONG);
 				long_segments[l] = long_segment;
 				long_graph[static_cast<point>(l.start)].push_back(l);
 				for(const segment* short_segment : long_segment) {
@@ -953,7 +996,7 @@ namespace pathfinding {
 
 
 				graph[from].emplace_back(from, to, speed, 0.0, off_time); // add the segment to the adjacency list for the starting point
-				output_segment(out_file, graph[from].back(), graph[from].back().off_time > 0 ? 'k' : 'f');
+				output_segment(out_file, graph[from].back(), graph[from].back().off_time > 0 ? segment_types::BLACK_SEG : segment_types::FORWARD);
 				seg_count++;
 
 				if (r["oneway"] == "yes" || r["oneway"] == "true" || r["oneway"] == "1" || (r.hasTag("junction") && r["junction"] == "roundabout")) {
@@ -968,7 +1011,7 @@ namespace pathfinding {
 				}
 
 				graph[to].emplace_back(to, from, speed, 0.0, off_time);
-				output_segment(out_file, graph[to].back(), graph[to].back().off_time > 0 ? 'k' : 'r');
+				output_segment(out_file, graph[to].back(), graph[to].back().off_time > 0 ? segment_types::BLACK_SEG : segment_types::REVERSE);
 				seg_count++;
 
 			}
@@ -1017,7 +1060,7 @@ namespace traffic_sim {
 		segment* next_segment = nullptr;
 		double segment_position = 0.0;
 		vector<segment*> path;
-		char color = 'r';
+		car_types color = car_types::RED;
 
 		bool should_reset = false;
 
@@ -1121,7 +1164,6 @@ namespace traffic_sim {
 			}
 			if(cur_speed > EPSILON) segment_position += dist;
 			while(segment_position >= cur_segment->length) { // moving into next segment
-				segment_position -= cur_segment->length;
 
 
 				for (auto it = cur_segment->cars.begin(); it != cur_segment->cars.end(); ++it) // erase this from the current segment's car list
@@ -1137,6 +1179,7 @@ namespace traffic_sim {
 					reset();
 					return;
 				}
+				segment_position -= cur_segment->length;
 
 				// slow down for turns, formula: https://www.desmos.com/calculator/to2fkqowrh
 				const double angle = cur_segment->angle(*path.front());
@@ -1184,14 +1227,14 @@ namespace traffic_sim {
 			if(obst < 0.0) {
 				set_speed(cur_speed + dt * accel);
 				move_dist(max_d); // no obstacles ahead, go full power
-				if(cur_speed == get_max_speed()) color = 'o';
-				else color = 'r';
+				if(cur_speed == get_max_speed()) color = car_types::ORANGE;
+				else color = car_types::RED;
 				return;
 			} else {
-				if(obst <= DEFAULT_CAR_RADIUS) {obst = 0.0; move_dist(0.0); cur_speed = 0.0; color = 'k'; return;}
+				if(obst <= DEFAULT_CAR_RADIUS) {obst = 0.0; move_dist(0.0); cur_speed = 0.0; color = car_types::BLACK; return;}
 				double v_max = get_max_speed();
 				if(v_max - cur_speed <= EPSILON) {
-					color = 'g';
+					color = car_types::GREEN;
 					double t_stop = (2*brake*obst - cur_speed * cur_speed)
 								/(2*brake*cur_speed);
 					if(t_stop < 0) move_dist(min_d, dt);
@@ -1207,9 +1250,9 @@ namespace traffic_sim {
 				double k = calc_k(v_max);
 
 				double t_stop = (v_max - cur_speed) / (accel * (1-k)); // negative t_stop means that the crossing is behind the x-axis
-				if(t_stop <= 0) {move_dist(min_d, dt); color = 'k';} // t_stop
+				if(t_stop <= 0) {move_dist(min_d, dt); color = car_types::BLACK;} // t_stop
 				else if(k > 0){
-					color = 'b';
+					color = car_types::BLUE;
 					double t_max1 = max(0.0, (v_max - cur_speed) / accel);
 					double t_max2 = t_stop + (accel * t_stop * k) / brake;
 					if(t_max2 > dt) move_dist(max_d, dt);
@@ -1220,7 +1263,7 @@ namespace traffic_sim {
 						move_dist(area(cur_speed, brake, dt-t_max2), dt-t_max2);
 					}
 				} else {
-					color = 'd';
+					color = car_types::DARK_BLUE;
 					// negative k: obst is too close to reach maximum speed before meeting
 					// negative k messes up the calculation for the other faces, so a different formula is needed
 					//t_stop = (2 * brake * obst - cur_speed * cur_speed) * (accel + brake) / (2 * cur_speed + )
@@ -1312,7 +1355,9 @@ namespace traffic_sim {
 
 	static ostream& operator<<(ostream& out, const car& c)
 	{
-		out << "car " << c.position << ' ' << c.color;
+		out.put((char)out_types::CAR | (char)c.color);
+		out.write((char*)&c.position, sizeof(c.position));
+		flush(out);
 		return out;
 	}
 
@@ -1425,7 +1470,7 @@ namespace traffic_sim {
 
 		for(person& p : people) { // assign work for each person (work for kids 7-18 = school)
 			// exceptions based on age and employment rate
-			if(p.age <= 6 || p.age >= 65 || rng::random_chance(EMPLOYMENT_RATE / 100.0)) continue;
+			if(p.age <= 6 || p.age >= 65 || rng::random_chance(1.0 - EMPLOYMENT_RATE / 100.0)) continue;
 			if(assigned_positions == total_positions) break;
 			while(true) {
 				// random workplace
@@ -1530,7 +1575,9 @@ namespace traffic_sim {
 		cur_time += dt;
 		cout << "PROGRESS: " << cur_time << " / " << SIM_LENGTH << '\r';
 		flush(cout);
-		out_file << "t " << cur_time << endl;
+		out_file.put(0);
+		out_file.write((char*)&cur_time, sizeof(cur_time));
+		flush(out_file);
 		while(!events.empty() && events.top().time <= cur_time) {
 			events.top().call();
 			events.pop();
@@ -1540,12 +1587,27 @@ namespace traffic_sim {
 			if (p.p_car && p.check_car()) {
 				p.p_car->move(dt);
 				p.p_car->update_position();
-				out_file << p.p_car.value() << endl;
+				out_file << p.p_car.value();
 			}
 		}
+		int index = 0;
+		out_file.put((char)out_types::TRAFFIC_LIGHT | (char)traffic_light_types::SERIES);
+		int buffer_size = traffic_light_segments.size() / 8;
+		if(traffic_light_segments.size() % 8) buffer_size++;
+		char *buffer = (char*)malloc(buffer_size * sizeof(char));
+		char curr = 0;
 		for(const segment* s : traffic_light_segments) {
-			output_traffic_light(out_file, s);
+			curr <<= 1;
+			curr |= s->is_red();
+			index++;
+			if(index % 8 == 0) {
+				buffer[index / 8 - 1] = curr;
+				curr = 0;
+			}
 		}
+		if(index % 8) buffer[buffer_size-1] <<= 8 - (index % 8);
+		out_file.write(buffer, buffer_size * sizeof(char));
+		free(buffer);
 	}
 
 
@@ -1666,7 +1728,7 @@ namespace traffic_sim {
 						graph[from].emplace_back(from, to, sp, len);
 						weak_connections[from].insert(to);
 						weak_connections[to].insert(from);
-						output_segment(out_file, graph[from].back(), 'f');
+						output_segment(out_file, graph[from].back(), segment_types::FORWARD);
 					}
 					break;
 				//case 'w':

@@ -55,6 +55,8 @@ int main(int argc, char *argv[])
 	parse_config(config_path);
 	init_io_files();
 
+	out_file.write((char*)&TIME_STEP, sizeof(TIME_STEP));
+
 	if(using_input) {
 		parse_input();
 	} else {
@@ -69,6 +71,10 @@ int main(int argc, char *argv[])
 	// TODO: Fix car movement..
 	// TODO: Add output file indexing in godot for more efficient reading
 
+
+	for(const segment* s : traffic_light_segments) {
+		output_traffic_light(out_file, s);
+	}
 
 	auto t1 = chrono::high_resolution_clock::now();
 	cout << endl;
